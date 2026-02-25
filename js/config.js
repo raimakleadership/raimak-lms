@@ -1,7 +1,7 @@
 const Config = {
   azure: {
-    clientId: "PASTE_YOUR_CLIENT_ID_HERE",
-    tenantId: "PASTE_YOUR_TENANT_ID_HERE",
+    clientId: ad1b153f-8b6a-4f1c-8ab2-58fcf03cf5c2,
+    tenantId: 39e14190-0b23-4ecd-99f9-606ad1215881,
     redirectUri: window.location.origin + window.location.pathname
   },
   sharePoint: {
