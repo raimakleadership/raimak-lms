@@ -66,11 +66,7 @@ function showLoginScreen() {
     <div class="login-screen">
       <div class="login-card">
         <div class="login-logo">
-          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-            <rect width="48" height="48" rx="12" fill="#F6A623"/>
-            <path d="M12 36V12h8l8 12 8-12h8v24h-8V22l-8 12-8-12v14z" fill="#0D0F14"/>
-          </svg>
-          <span>Raimak</span>
+          <img src="Raimak.png" alt="Raimak">
         </div>
         <h1>Lead Management</h1>
         <p>Sign in with your Raimak Microsoft account to access the system.</p>
@@ -94,11 +90,7 @@ function showAppShell() {
       <!-- Sidebar -->
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-brand">
-          <svg width="36" height="36" viewBox="0 0 48 48" fill="none">
-            <rect width="48" height="48" rx="10" fill="#F6A623"/>
-            <path d="M12 36V12h8l8 12 8-12h8v24h-8V22l-8 12-8-12v14z" fill="#0D0F14"/>
-          </svg>
-          <span>Raimak</span>
+          <img src="Raimak.png" alt="Raimak">
         </div>
 
         <nav class="sidebar-nav">
