@@ -1,55 +1,47 @@
-// ============================================================
-//  Raimak LMS — Graph API / SharePoint Data Layer
-// ============================================================
+// Raimak LMS - Graph API / SharePoint Data Layer v2.0
 
 const Graph = (() => {
 
-  const base = Config.sharePoint.graphBase;
+  const base  = Config.sharePoint.graphBase;
   const host  = Config.sharePoint.hostname;
-  const lists  = Config.sharePoint.lists;
-
-  // ── Site IDs (resolved at runtime) ───────────────────────
+  const lists = Config.sharePoint.lists;
   let siteIds = { leadship: null, team: null };
 
-  // ── Generic Fetch Helper ──────────────────────────────────
+  // ── Generic Fetch ──────────────────────────────────────────
   async function apiFetch(url, method = "GET", body = null) {
     const token = await Auth.getToken();
     if (!token) throw new Error("Not authenticated");
-
     const opts = {
       method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: "Bearer " + token,
         "Content-Type": "application/json",
-        Prefer: "HidePersonalData=false",
       },
     };
     if (body) opts.body = JSON.stringify(body);
-
     const res = await fetch(url, opts);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+      throw new Error((err.error && err.error.message) || ("HTTP " + res.status));
     }
     if (res.status === 204) return null;
     return res.json();
   }
 
-  // ── Resolve Site IDs ──────────────────────────────────────
+  // ── Resolve Site IDs ───────────────────────────────────────
   async function resolveSiteIds() {
     if (siteIds.leadship && siteIds.team) return;
     const [s1, s2] = await Promise.all([
-      apiFetch(`${base}/sites/${host}:/${Config.sharePoint.sites.leadship}`),
-      apiFetch(`${base}/sites/${host}:/${Config.sharePoint.sites.team}`),
+      apiFetch(base + "/sites/" + host + ":/" + Config.sharePoint.sites.leadship),
+      apiFetch(base + "/sites/" + host + ":/" + Config.sharePoint.sites.team),
     ]);
     siteIds.leadship = s1.id;
     siteIds.team     = s2.id;
   }
 
-  // ── Paginate Through All Items ─────────────────────────────
+  // ── Paginate ───────────────────────────────────────────────
   async function getAllItems(url) {
-    let items = [];
-    let next  = url;
+    let items = [], next = url;
     while (next) {
       const data = await apiFetch(next);
       items = items.concat(data.value || []);
@@ -64,47 +56,60 @@ const Graph = (() => {
 
   async function getLeads() {
     await resolveSiteIds();
-    const url = `${base}/sites/${siteIds.team}/lists/${lists.leadsList}/items?expand=fields&$top=500`;
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
     return raw.map(normalizeLeadItem);
   }
 
+  // Get a single unassigned lead for the agent feed
+  async function getNextLeadForAgent(agentEmail) {
+    await resolveSiteIds();
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields&$top=500";
+    const raw = await getAllItems(url);
+    const leads = raw.map(normalizeLeadItem);
+    // Find unassigned New lead not in cool-off
+    return leads.find(l =>
+      l.status === "New" &&
+      !l.assignedTo &&
+      !isInCoolOff(l)
+    ) || null;
+  }
+
   async function addLead(fields) {
     await resolveSiteIds();
-    const url = `${base}/sites/${siteIds.team}/lists/${lists.leadsList}/items`;
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items";
     const res = await apiFetch(url, "POST", { fields });
     return normalizeLeadItem(res);
   }
 
   async function updateLead(itemId, fields) {
     await resolveSiteIds();
-    const url = `${base}/sites/${siteIds.team}/lists/${lists.leadsList}/items/${itemId}/fields`;
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items/" + itemId + "/fields";
     await apiFetch(url, "PATCH", fields);
   }
 
   async function deleteLead(itemId) {
     await resolveSiteIds();
-    const url = `${base}/sites/${siteIds.team}/lists/${lists.leadsList}/items/${itemId}`;
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items/" + itemId;
     await apiFetch(url, "DELETE");
   }
 
-  // Normalise raw SharePoint item → clean lead object
   function normalizeLeadItem(item) {
     const f = item.fields || {};
     return {
-      id:           item.id,
-      name:         f.Title        || f.LeadName    || "",
-      company:      f.Company      || "",
-      email:        f.Email        || f.EmailAddress || "",
-      phone:        f.Phone        || f.PhoneNumber  || "",
-      status:       f.Status       || "New",
-      source:       f.LeadSource   || f.Source       || "",
-      assignedTo:   f.AssignedTo   || f.Agent        || "",
-      notes:        f.Notes        || "",
-      value:        f.DealValue    || f.Value        || "",
-      lastContacted:f.LastContacted || null,
-      createdAt:    item.createdDateTime || f.Created || null,
-      modified:     item.lastModifiedDateTime || null,
+      id:            item.id,
+      name:          f.Title         || f.LeadName     || "",
+      company:       f.Company       || "",
+      email:         f.Email         || f.EmailAddress || "",
+      phone:         f.Phone         || f.PhoneNumber  || "",
+      status:        f.Status        || "New",
+      source:        f.LeadSource    || f.Source       || "",
+      assignedTo:    f.AssignedTo    || f.Agent        || "",
+      notes:         f.Notes        || "",
+      value:         f.DealValue     || f.Value        || "",
+      lastContacted: f.LastContacted || null,
+      createdAt:     item.createdDateTime || f.Created || null,
+      modified:      item.lastModifiedDateTime || null,
     };
   }
 
@@ -114,17 +119,17 @@ const Graph = (() => {
 
   async function getContractors() {
     await resolveSiteIds();
-    const url = `${base}/sites/${siteIds.team}/lists/${lists.contractorList}/items?expand=fields&$top=500`;
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.contractorList + "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
     return raw.map(item => {
       const f = item.fields || {};
       return {
-        id:       item.id,
-        name:     f.Title        || f.ContractorName || "",
-        email:    f.Email        || "",
-        phone:    f.Phone        || "",
-        role:     f.Role         || "Agent",
-        active:   f.Active !== undefined ? f.Active : true,
+        id:     item.id,
+        name:   f.Title || f.ContractorName || "",
+        email:  f.Email || "",
+        phone:  f.Phone || "",
+        role:   f.Role  || "Agent",
+        active: f.Active !== undefined ? f.Active : true,
       };
     });
   }
@@ -133,19 +138,21 @@ const Graph = (() => {
   //  ACTIVITY LOG
   // ============================================================
 
-  async function getActivityLog(limit = 200) {
+  async function getActivityLog(limit) {
+    limit = limit || 200;
     await resolveSiteIds();
-    const url = `${base}/sites/${siteIds.leadship}/lists/${lists.activityLog}/items?expand=fields&$orderby=createdDateTime desc&$top=${limit}`;
+    const url = base + "/sites/" + siteIds.leadship + "/lists/" + lists.activityLog + "/items?expand=fields&$orderby=createdDateTime desc&$top=" + limit;
     const raw = await getAllItems(url);
     return raw.map(item => {
       const f = item.fields || {};
       return {
         id:        item.id,
-        leadId:    f.LeadId     || f.LeadID    || "",
-        leadName:  f.LeadName   || f.Title     || "",
-        action:    f.Action     || f.Activity  || "",
-        agent:     f.Agent      || f.AssignedTo || "",
-        notes:     f.Notes      || "",
+        leadId:    f.LeadId    || f.LeadID    || "",
+        leadName:  f.LeadName  || f.Title     || "",
+        action:    f.Action    || f.Activity  || "",
+        agent:     f.Agent     || f.AssignedTo || "",
+        agentEmail:f.AgentEmail || "",
+        notes:     f.Notes     || "",
         timestamp: item.createdDateTime || f.Created || null,
       };
     });
@@ -153,8 +160,39 @@ const Graph = (() => {
 
   async function logActivity(entry) {
     await resolveSiteIds();
-    const url = `${base}/sites/${siteIds.leadship}/lists/${lists.activityLog}/items`;
+    const url = base + "/sites/" + siteIds.leadship + "/lists/" + lists.activityLog + "/items";
     await apiFetch(url, "POST", { fields: entry });
+  }
+
+  // Get today's sold leads for live feed
+  async function getTodaySales() {
+    await resolveSiteIds();
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields&$top=500";
+    const raw = await getAllItems(url);
+    const today = new Date().toDateString();
+    return raw.map(normalizeLeadItem).filter(l => {
+      if (l.status !== Config.soldStatus) return false;
+      const mod = l.modified ? new Date(l.modified).toDateString() : null;
+      return mod === today;
+    });
+  }
+
+  // Get daily activity stats per agent for the report
+  async function getDailyStats() {
+    const log = await getActivityLog(500);
+    const today = new Date().toDateString();
+    const todayEntries = log.filter(e => e.timestamp && new Date(e.timestamp).toDateString() === today);
+
+    // Count contacts per agent today
+    const stats = {};
+    for (const entry of todayEntries) {
+      const agent = entry.agent || "Unknown";
+      if (!stats[agent]) stats[agent] = { agent, contacts: 0, sold: 0, actions: [] };
+      stats[agent].contacts++;
+      if (entry.action === "Status: " + Config.soldStatus) stats[agent].sold++;
+      stats[agent].actions.push(entry);
+    }
+    return Object.values(stats).sort((a, b) => b.contacts - a.contacts);
   }
 
   // ============================================================
@@ -165,10 +203,9 @@ const Graph = (() => {
     const now = new Date();
     const { coolOffDays, maxLeadsPerAgent, recycleAfterDays } = Config.rules;
 
-    // Count leads per agent
     const agentCounts = {};
     for (const lead of leads) {
-      if (lead.assignedTo && !["Won","Lost","Recycled"].includes(lead.status)) {
+      if (lead.assignedTo && !Config.terminalStatuses.includes(lead.status)) {
         agentCounts[lead.assignedTo] = (agentCounts[lead.assignedTo] || 0) + 1;
       }
     }
@@ -176,35 +213,31 @@ const Graph = (() => {
     return leads.map(lead => {
       const flags = [];
 
-      // Cool-off check
       if (lead.lastContacted) {
-        const last   = new Date(lead.lastContacted);
-        const daysSince = (now - last) / 86400000;
-        if (daysSince < coolOffDays && !["Won","Lost"].includes(lead.status)) {
-          flags.push(`cool_off`);
+        const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
+        if (daysSince < coolOffDays && !Config.terminalStatuses.includes(lead.status)) {
+          flags.push("cool_off");
         }
       }
 
-      // Recycle check
       const ref = lead.lastContacted || lead.createdAt;
-      if (ref && !["Won","Lost","Recycled"].includes(lead.status)) {
+      if (ref && !Config.terminalStatuses.includes(lead.status)) {
         const daysSince = (now - new Date(ref)) / 86400000;
         if (daysSince > recycleAfterDays) flags.push("needs_recycle");
       }
 
-      // Over-assigned agent
       if (lead.assignedTo && agentCounts[lead.assignedTo] > maxLeadsPerAgent) {
         flags.push("agent_overloaded");
       }
 
-      return { ...lead, flags, agentLeadCount: agentCounts[lead.assignedTo] || 0 };
+      return Object.assign({}, lead, { flags: flags, agentLeadCount: agentCounts[lead.assignedTo] || 0 });
     });
   }
 
   function canAgentTakeLead(agentName, leads) {
-    const count = leads.filter(
-      l => l.assignedTo === agentName && !["Won","Lost","Recycled"].includes(l.status)
-    ).length;
+    const count = leads.filter(function(l) {
+      return l.assignedTo === agentName && !Config.terminalStatuses.includes(l.status);
+    }).length;
     return count < Config.rules.maxLeadsPerAgent;
   }
 
@@ -214,10 +247,22 @@ const Graph = (() => {
     return daysSince < Config.rules.coolOffDays;
   }
 
+  // Count how many leads an agent contacted today
+  function agentContactsToday(agentName, activityLog) {
+    const today = new Date().toDateString();
+    return activityLog.filter(function(e) {
+      return e.agent === agentName &&
+             e.timestamp &&
+             new Date(e.timestamp).toDateString() === today;
+    }).length;
+  }
+
   return {
     getLeads, addLead, updateLead, deleteLead,
+    getNextLeadForAgent,
     getContractors,
     getActivityLog, logActivity,
-    applyBusinessRules, canAgentTakeLead, isInCoolOff,
+    getTodaySales, getDailyStats,
+    applyBusinessRules, canAgentTakeLead, isInCoolOff, agentContactsToday,
   };
 })();
