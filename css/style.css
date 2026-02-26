@@ -932,3 +932,291 @@ input, select, textarea { font-family: inherit; }
   .kpi-grid { grid-template-columns: 1fr 1fr; }
   .form-row { grid-template-columns: 1fr; }
 }
+
+/* ============================================================
+   v2.0 Additions — Feed, Sales, Report, Assign, Confetti
+============================================================ */
+
+/* ── Live Sales Feed ────────────────────────────────────────── */
+.live-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  margin-right: 8px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.85); }
+}
+
+.sales-feed { padding: 4px 0; max-height: 220px; overflow-y: auto; }
+
+.sale-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--transition);
+  animation: fadeUp 0.3s ease both;
+}
+.sale-entry:last-child { border-bottom: none; }
+.sale-entry:hover { background: var(--card-hover); }
+
+.sale-icon { font-size: 18px; }
+
+.sale-info { flex: 1; }
+.sale-name  { font-weight: 600; font-size: 13.5px; color: var(--text-1); display: block; }
+.sale-agent { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+
+.sale-time  { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); white-space: nowrap; }
+
+/* ── Top 5 List ─────────────────────────────────────────────── */
+.top5-list { padding: 8px 0 12px; }
+
+.top5-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.top5-row:last-child { border-bottom: none; }
+
+.top5-rank {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-head);
+  font-weight: 800;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.rank-1 { background: #FFD700; color: #000; }
+.rank-2 { background: #C0C0C0; color: #000; }
+.rank-3 { background: #CD7F32; color: #fff; }
+.rank-4, .rank-5 { background: var(--border); color: var(--text-2); }
+
+.top5-name  { flex: 1; font-weight: 600; font-size: 13.5px; }
+.top5-count { font-family: var(--font-mono); font-size: 12px; color: var(--green); font-weight: 600; }
+
+/* ── Agent Feed Card ────────────────────────────────────────── */
+.feed-card {
+  background: var(--card);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius-lg);
+  padding: 28px 32px;
+  margin-bottom: 20px;
+  animation: fadeUp 0.3s ease both;
+  border-top: 3px solid var(--blue-mid);
+}
+
+.feed-card-empty {
+  text-align: center;
+  padding: 56px 32px;
+  border-top-color: var(--green);
+}
+
+.feed-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  color: var(--green);
+}
+
+.feed-card-empty h3 {
+  font-family: var(--font-head);
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.feed-card-empty p { color: var(--text-2); font-size: 14px; }
+
+.feed-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.feed-name {
+  font-family: var(--font-head);
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--text-1);
+  margin-bottom: 12px;
+  letter-spacing: -0.5px;
+}
+
+.feed-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.feed-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.feed-notes {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-2);
+  margin-bottom: 20px;
+}
+
+.feed-status-row { margin-bottom: 16px; }
+
+.feed-status-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.status-btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 13px;
+  border: 2px solid transparent;
+  transition: all var(--transition);
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text-2);
+  border-color: var(--border);
+}
+
+.status-btn:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--blue-mid); color: var(--text-1); }
+.status-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.status-btn-1st-contact:hover:not(:disabled)  { background: rgba(167,139,250,0.1); border-color: var(--purple); color: var(--purple); }
+.status-btn-2nd-contact:hover:not(:disabled)  { background: rgba(59,130,246,0.1);  border-color: var(--blue-bright); color: var(--blue-bright); }
+.status-btn-3rd-contact:hover:not(:disabled)  { background: rgba(251,191,36,0.1);  border-color: var(--amber); color: var(--amber); }
+.status-btn-do-not-call:hover:not(:disabled)  { background: var(--red-dim);         border-color: var(--red); color: var(--red); }
+.status-btn-sold:hover:not(:disabled)         { background: var(--green-dim);        border-color: var(--green); color: var(--green); }
+.status-btn-pending-order:hover:not(:disabled){ background: rgba(30,107,196,0.15);  border-color: var(--drop); color: #7EC8E3; }
+.status-btn-fnq:hover:not(:disabled)          { background: rgba(100,116,139,0.15); border-color: #94A3B8; color: #94A3B8; }
+
+.feed-note-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.feed-note-row .form-textarea { flex: 1; }
+
+/* ── Contacts Today Badge ───────────────────────────────────── */
+.contacts-today-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.contacts-today-badge.badge-full {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+/* ── Assign Leads ───────────────────────────────────────────── */
+.assign-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.assign-agent-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all var(--transition);
+}
+
+.assign-agent-card.agent-full {
+  border-color: var(--red);
+  background: var(--red-dim);
+}
+
+.assign-agent-info { flex: 1; min-width: 0; }
+
+.assign-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  display: block;
+  margin-top: 4px;
+}
+
+.assign-select-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.assign-select { min-width: 160px; font-size: 12.5px; padding: 6px 10px; }
+
+/* ── New Status Badge colours ───────────────────────────────── */
+.status-1st-contact   { background: rgba(167,139,250,0.12); color: var(--purple); }
+.status-2nd-contact   { background: rgba(59,130,246,0.15);  color: var(--blue-bright); }
+.status-3rd-contact   { background: rgba(251,191,36,0.12);  color: var(--amber); }
+.status-do-not-call   { background: var(--red-dim);          color: var(--red); }
+.status-sold          { background: var(--green-dim);         color: var(--green); }
+.status-pending-order { background: rgba(30,107,196,0.15);  color: #7EC8E3; }
+.status-fnq           { background: rgba(100,116,139,0.15); color: #94A3B8; }
+
+/* ── Confetti burst ─────────────────────────────────────────── */
+.confetti-burst {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 32px;
+  font-family: var(--font-head);
+  font-weight: 800;
+  color: var(--green);
+  background: var(--card);
+  border: 2px solid var(--green);
+  border-radius: var(--radius-lg);
+  padding: 20px 40px;
+  z-index: 9999;
+  animation: confettiBurst 2.5s ease both;
+  pointer-events: none;
+  text-align: center;
+}
+
+@keyframes confettiBurst {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+  80%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -60%) scale(0.95); }
+}
