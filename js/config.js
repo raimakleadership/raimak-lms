@@ -63,11 +63,10 @@ const Config = {
   // Add email addresses of leadership/admins who can assign leads
   roles: {
     admins: [
-      // Add admin/leadership emails here e.g:
-      // "antoinette.bickel@raimak.com",
-      // "S.Balleste@raimak.com",
-      // "B.Hinesley@raimak.com",
-      // "RichardZacker@raimak.com",
+      "antoinette.bickel@raimak.com",
+      "S.Balleste@raimak.com",
+      "B.Hinesley@raimak.com",
+      "RichardZacker@raimak.com",
     ],
     // Anyone NOT in the admins list is treated as a standard Agent
   },
