@@ -420,7 +420,7 @@ async function confirmDripAssign(leadId) {
   const lead = State.leads.find(function(l) { return l.id === leadId; });
   setLoading(true);
   try {
-    await Graph.updateLead(leadId, { AssignedTo: agent });
+    await Graph.updateLead(leadId, { Agent_x0020_Assigned: agent });
     await Graph.logActivity({
       LeadId:   leadId,
       LeadName: lead ? lead.name : "",
@@ -688,7 +688,7 @@ async function assignLead(leadId) {
   const lead = State.leads.find(function(l) { return l.id === leadId; });
   setLoading(true);
   try {
-    await Graph.updateLead(leadId, { AssignedTo: agent });
+    await Graph.updateLead(leadId, { Agent_x0020_Assigned: agent });
     await Graph.logActivity({ LeadId: leadId, LeadName: lead ? lead.name : "", Action: "Assigned", Agent: agent, Notes: "Assigned by " + ((State.currentUser && State.currentUser.name) || "Admin") });
     UI.showToast("Assigned to " + agent, "success");
     await loadAllData();
@@ -713,7 +713,7 @@ async function autoAssignLeads() {
     });
     let assigned = 0;
     for (let i = 0; i < Math.min(unassigned.length, slots.length); i++) {
-      await Graph.updateLead(unassigned[i].id, { AssignedTo: slots[i] });
+      await Graph.updateLead(unassigned[i].id, { Agent_x0020_Assigned: slots[i] });
       assigned++;
     }
     UI.showToast("Assigned " + assigned + " leads!", "success");
@@ -1093,7 +1093,7 @@ function collectLeadForm() {
     Phone:           ((document.getElementById("f-phone")       ||{}).value||"").trim(),
     Status:          (document.getElementById("f-status")       ||{}).value || "New",
     LeadSource:      (document.getElementById("f-source")       ||{}).value || "",
-    AssignedTo:      (document.getElementById("f-assigned")     ||{}).value || "",
+    Agent_x0020_Assigned:      (document.getElementById("f-assigned")     ||{}).value || "",
     LastContacted:   (document.getElementById("f-lastcontacted")||{}).value || "",
     CurrentMRC:      (document.getElementById("f-mrc")          ||{}).value || "",
     CurrentProducts: (document.getElementById("f-products")     ||{}).value || "",
