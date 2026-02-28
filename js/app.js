@@ -568,7 +568,7 @@ async function agentUpdateStatus(leadId, newStatus) {
       CurrentProducts: products,
     });
     await Graph.logActivity({
-      LeadID::     leadId,
+      LeadID:     leadId,
       LeadName:   lead.name,
       Action:     "Status: " + newStatus,
       Agent:      (user && user.name) || "",
