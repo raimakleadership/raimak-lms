@@ -689,7 +689,7 @@ async function assignLead(leadId) {
   setLoading(true);
   try {
     await Graph.updateLead(leadId, { Agent_x0020_Assigned: agent });
-    await Graph.logActivity({ LeadID:: leadId, LeadName: lead ? lead.name : "", Action: "Assigned", Agent: agent, Notes: "Assigned by " + ((State.currentUser && State.currentUser.name) || "Admin") });
+    await Graph.logActivity({ LeadID: leadId, LeadName: lead ? lead.name : "", Action: "Assigned", Agent: agent, Notes: "Assigned by " + ((State.currentUser && State.currentUser.name) || "Admin") });
     UI.showToast("Assigned to " + agent, "success");
     await loadAllData();
     renderAssignLeads();
