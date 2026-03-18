@@ -511,6 +511,7 @@ function renderLeadFeedCard(myLeads, contactsToday) {
       <div class="feed-meta-row">
         ${lead.phone ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.96a16 16 0 0 0 6 6l.92-.92a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16.92z" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.phone)}</span>` : ""}
         ${lead.email ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.email)}</span>` : ""}
+        ${lead.address ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.address)}${lead.city ? ", " + escHtml(lead.city) : ""}${lead.state ? " " + escHtml(lead.state) : ""}${lead.zip ? " " + escHtml(lead.zip) : ""}</span>` : ""}
       </div>
 
       ${lead.notes ? `<div class="feed-notes">${escHtml(lead.notes)}</div>` : ""}
@@ -527,6 +528,14 @@ function renderLeadFeedCard(myLeads, contactsToday) {
             <option value="">Select products...</option>
             ${Config.currentProducts.map(function(p) { return `<option value="${p}" ${lead.currentProducts===p?"selected":""}>${p}</option>`; }).join("")}
           </select>
+        </div>
+        <div class="form-group">
+          <label>CBR</label>
+          <input type="text" id="feed-cbr" class="form-input" placeholder="Enter CBR" value="${escHtml(lead.cbr||"")}">
+        </div>
+        <div class="form-group">
+          <label>BTN</label>
+          <input type="text" id="feed-btn" class="form-input" placeholder="Enter BTN" value="${escHtml(lead.btn||"")}">
         </div>
       </div>
 
@@ -562,11 +571,15 @@ async function agentUpdateStatus(leadId, newStatus) {
     const mrc      = (document.getElementById("feed-mrc")      || {}).value || "";
     const products = (document.getElementById("feed-products") || {}).value || "";
     const notes    = (document.getElementById("feed-notes")    || {}).value || "";
+    const cbr      = (document.getElementById("feed-cbr")      || {}).value || "";
+    const btn      = (document.getElementById("feed-btn")      || {}).value || "";
     await Graph.updateLead(leadId, {
       Status:                newStatus,
       LastTouchedOn:         today,
       CurrentMRC:            mrc,
       CurrentProducts:       products,
+      CBR:                   cbr,
+      BTN:                   btn,
     });
     await Graph.logActivity({
       LeadId:     leadId,
@@ -589,6 +602,8 @@ async function agentSaveNote(leadId) {
   const notes    = document.getElementById("feed-notes");
   const mrc      = document.getElementById("feed-mrc");
   const products = document.getElementById("feed-products");
+  const cbr      = document.getElementById("feed-cbr");
+  const btn      = document.getElementById("feed-btn");
   if (!notes || !notes.value.trim()) { UI.showToast("Please add a note first.", "error"); return; }
   const lead = State.leads.find(function(l) { return l.id === leadId; });
   if (!lead) return;
@@ -598,6 +613,8 @@ async function agentSaveNote(leadId) {
       Notes:           notes.value.trim(),
       CurrentMRC:      (mrc && mrc.value) || "",
       CurrentProducts: (products && products.value) || "",
+      CBR:             (cbr && cbr.value) || "",
+      BTN:             (btn && btn.value) || "",
     });
     await Graph.logActivity({ LeadId: leadId, LeadName: lead.name, Action: "Note Added", Agent: (State.currentUser && State.currentUser.name) || "", Notes: notes.value.trim() });
     UI.showToast("Saved!", "success");
@@ -942,8 +959,9 @@ function renderLeadsTable(leads, compact, agentView) {
           <th>Type</th>
           <th>Status</th>
           <th>Assigned To</th>
+          <th>Address</th>
           <th>Last Contacted</th>
-          ${compact ? "" : "<th>MRC</th><th>Flags</th><th></th>"}
+          ${compact ? "" : "<th>CBR</th><th>BTN</th><th>Flags</th><th></th>"}
         </tr></thead>
         <tbody>
           ${leads.map(function(lead) {
@@ -958,9 +976,11 @@ function renderLeadsTable(leads, compact, agentView) {
                 <td>${lead.leadType ? `<span class="lead-type-badge ${typeCls}">${escHtml(lead.leadType)}</span>` : "—"}</td>
                 <td><span class="status-badge ${statusCls}">${lead.status}</span></td>
                 <td>${escHtml(lead.assignedTo || "—")}</td>
+                <td class="td-mono" style="font-size:11px">${lead.address ? escHtml(lead.address) + (lead.city ? ", " + escHtml(lead.city) : "") + (lead.state ? " " + escHtml(lead.state) : "") : "—"}</td>
                 <td class="td-mono">${formatDate(lead.lastContacted) || "—"}</td>
                 ${compact ? "" : `
-                <td class="td-mono">${lead.currentMRC ? "$" + escHtml(lead.currentMRC) + "/mo" : "—"}</td>
+                <td class="td-mono">${escHtml(lead.cbr || "—")}</td>
+                <td class="td-mono">${escHtml(lead.btn || "—")}</td>
                 <td class="td-flags">${(lead.flags||[]).map(function(f) { return `<span class="flag flag-${f}">${flagLabel(f)}</span>`; }).join("")}</td>
                 <td class="td-actions">
                   ${isAdmin() ? `
