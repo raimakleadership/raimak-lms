@@ -104,11 +104,11 @@ function showAppShell() {
       Daily Report
     </a>` : "";
 
-  const agentNav = !isAdmin() ? `
+  const agentNav = `
     <a class="nav-item" data-view="myleads" onclick="navigate('myleads')">
       <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><polyline points="12,6 12,12 16,14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       My Leads
-    </a>` : "";
+    </a>`;
 
   document.getElementById("app").innerHTML = `
     <div class="app-shell">
