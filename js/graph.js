@@ -63,10 +63,7 @@ const Graph = (() => {
 
   // ── Assign agent on a lead (handles Lookup field correctly) ─
   async function assignAgent(itemId, agentName) {
-    const agentId = await resolveAgentId(agentName);
-    console.log("assignAgent:", agentName, "→ ID:", agentId);
-    if (!agentId) throw new Error("Agent \"" + agentName + "\" not found in Contractor & Employee List.");
-    await updateLead(itemId, { Agent_x0020_AssignedLookupId: agentId });
+    await updateLead(itemId, { Agent_x0020_Assigned: agentName });
   }
 
   // ── Paginate ───────────────────────────────────────────────
@@ -86,7 +83,7 @@ const Graph = (() => {
 
   async function getLeads() {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields($expand=Agent_x0020_Assigned)&$top=500";
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
     return raw.map(normalizeLeadItem);
   }
@@ -138,7 +135,7 @@ const Graph = (() => {
       phone:           f.Phone         || f.PhoneNumber  || "",
       status:          f.Status        || "New",
       source:          f.Campaign      || f.LeadSource   || f.Source || "",
-      assignedTo:      (f.Agent_x0020_Assigned && f.Agent_x0020_Assigned.LookupValue) || f.Agent_x0020_Assigned || "",
+      assignedTo:      f.Agent_x0020_Assigned || f.AgentAssigned || f.AssignedTo || f.Agent || "",
       notes:           f.Notes         || "",
       address:         f.WorkAddress   || f.Address      || "",
       city:            f.WorkCity      || f.City         || "",
