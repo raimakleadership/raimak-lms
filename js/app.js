@@ -915,6 +915,8 @@ async function bulkAssignType() {
     UI.showToast("Failed: " + err.message, "error");
   } finally { setLoading(false); }
 }
+
+function bulkExportSelected() {
   const ids   = Array.from(State.selectedLeads);
   const leads = State.leads.filter(function(l) { return ids.includes(l.id); });
   if (!leads.length) return;
