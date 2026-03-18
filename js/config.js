@@ -75,11 +75,10 @@ const Config = {
 
   roles: {
     admins: [
-      // Add admin emails here — remove the // to activate
-      // "RichardZacker@raimak.com",
-      // "B.Hinesley@raimak.com",
-      // "S.Balleste@raimak.com",
-      // "antoinette.bickel@raimak.com",
+      "RichardZacker@raimak.com",
+      "B.Hinesley@raimak.com",
+      "S.Balleste@raimak.com",
+      "antoinette.bickel@raimak.com",
     ],
   },
 
