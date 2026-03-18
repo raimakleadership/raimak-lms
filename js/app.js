@@ -781,7 +781,12 @@ function renderLeads() {
           <option value="">Assign to agent...</option>
           ${contractors.map(function(c) { return `<option value="${escHtml(c)}">${escHtml(c)}</option>`; }).join("")}
         </select>
-        <button class="btn-cyan bulk-btn" onclick="bulkAssign()">Assign Selected</button>
+        <button class="btn-cyan bulk-btn" onclick="bulkAssign()">Assign Agent</button>
+        <select class="filter-select bulk-assign-select" id="bulk-type-select" style="min-width:140px;font-size:12px;padding:6px 10px">
+          <option value="">Assign type...</option>
+          ${Config.leadTypes.map(function(t) { return `<option value="${escHtml(t)}">${escHtml(t)}</option>`; }).join("")}
+        </select>
+        <button class="btn-cyan bulk-btn" onclick="bulkAssignType()">Assign Type</button>
         <button class="btn-ghost bulk-btn" onclick="bulkExportSelected()">Export Selected</button>
         <button class="bulk-btn bulk-delete-btn" onclick="bulkDelete()">
           <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -891,7 +896,25 @@ async function bulkAssign() {
   } finally { setLoading(false); }
 }
 
-function bulkExportSelected() {
+async function bulkAssignType() {
+  const ids  = Array.from(State.selectedLeads);
+  const type = (document.getElementById("bulk-type-select") || {}).value;
+  if (!ids.length) return;
+  if (!type) { UI.showToast("Please select a lead type first.", "error"); return; }
+  if (!confirm("Set type to \"" + type + "\" for " + ids.length + " lead" + (ids.length !== 1 ? "s" : "") + "?")) return;
+  setLoading(true);
+  try {
+    for (var i = 0; i < ids.length; i++) {
+      await Graph.updateLead(ids[i], { LeadType: type });
+    }
+    UI.showToast("Set " + ids.length + " leads to type: " + type, "success");
+    State.selectedLeads.clear();
+    await loadAllData();
+    renderLeads();
+  } catch (err) {
+    UI.showToast("Failed: " + err.message, "error");
+  } finally { setLoading(false); }
+}
   const ids   = Array.from(State.selectedLeads);
   const leads = State.leads.filter(function(l) { return ids.includes(l.id); });
   if (!leads.length) return;
