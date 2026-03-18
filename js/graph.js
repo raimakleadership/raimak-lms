@@ -96,8 +96,8 @@ const Graph = (() => {
 
   function normalizeLeadItem(item) {
     const f    = item.fields || {};
-    const first = f.First_x0020_Name || f.FirstName || "";
-    const last  = f.Last_x0020_Name  || f.LastName  || "";
+    const first = f.FirstName || f.First_x0020_Name || "";
+    const last  = f.LastName  || f.Last_x0020_Name  || "";
     const name  = (first + " " + last).trim() || f.Title || f.LeadName || "";
     return {
       id:              item.id,
@@ -110,11 +110,12 @@ const Graph = (() => {
       source:          f.Campaign      || f.LeadSource   || f.Source || "",
       assignedTo:      f.Agent_x0020_Assigned || f.AgentAssigned || f.AssignedTo || f.Agent || "",
       notes:           f.Notes         || "",
-      address:         f.Address       || "",
-      city:            f.City          || "",
+      address:         f.WorkAddress   || f.Address      || "",
+      city:            f.WorkCity      || f.City         || "",
       state:           f.State         || "",
-      zip:             f.Zip           || "",
+      zip:             f.Zip           || f.ZipCode      || "",
       cbr:             f.CBR           || "",
+      btn:             f.BTN           || "",
       lockFlag:        f.LockFlag      || false,
       callbackAt:      f.CallbackDateTime || null,
       lastContacted:   f.LastTouchedOn || f.LastContacted || null,
@@ -123,8 +124,6 @@ const Graph = (() => {
       leadType:        f.Lead_x0020_Type || f.Type || f.Item_x0020_Type || f.LeadType || "",
       currentMRC:      f.CurrentMRC    || "",
       currentProducts: f.CurrentProducts || "",
-      cbr:             f.CBR           || "",
-      btn:             f.BTN           || "",
     };
   }
 
