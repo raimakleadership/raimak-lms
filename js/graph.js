@@ -64,6 +64,7 @@ const Graph = (() => {
   // ── Assign agent on a lead (handles Lookup field correctly) ─
   async function assignAgent(itemId, agentName) {
     const agentId = await resolveAgentId(agentName);
+    console.log("assignAgent:", agentName, "→ ID:", agentId);
     if (!agentId) throw new Error("Agent \"" + agentName + "\" not found in Contractor & Employee List.");
     await updateLead(itemId, { Agent_x0020_AssignedLookupId: agentId });
   }
