@@ -95,24 +95,34 @@ const Graph = (() => {
   }
 
   function normalizeLeadItem(item) {
-    const f = item.fields || {};
+    const f    = item.fields || {};
+    const first = f.First_x0020_Name || f.FirstName || "";
+    const last  = f.Last_x0020_Name  || f.LastName  || "";
+    const name  = (first + " " + last).trim() || f.Title || f.LeadName || "";
     return {
-      id:            item.id,
-      name:          f.Title         || f.LeadName     || "",
-      company:       f.Company       || "",
-      email:         f.Email         || f.EmailAddress || "",
-      phone:         f.Phone         || f.PhoneNumber  || "",
-      status:        f.Status        || "New",
-      source:        f.LeadSource    || f.Source       || "",
-      assignedTo:    f.Agent_x0020_Assigned || f.AssignedTo || f.Agent || "",
-      notes:         f.Notes        || "",
-      value:         f.DealValue     || f.Value        || "",
-      lastContacted: f.LastContacted || null,
-      createdAt:     item.createdDateTime || f.Created || null,
+      id:              item.id,
+      name:            name,
+      firstName:       first,
+      lastName:        last,
+      email:           f.Email         || f.EmailAddress || "",
+      phone:           f.Phone         || f.PhoneNumber  || "",
+      status:          f.Status        || "New",
+      source:          f.Campaign      || f.LeadSource   || f.Source || "",
+      assignedTo:      f.Agent_x0020_Assigned || f.AgentAssigned || f.AssignedTo || f.Agent || "",
+      notes:           f.Notes         || "",
+      address:         f.Address       || "",
+      city:            f.City          || "",
+      state:           f.State         || "",
+      zip:             f.Zip           || "",
+      cbr:             f.CBR           || "",
+      lockFlag:        f.LockFlag      || false,
+      callbackAt:      f.CallbackDateTime || null,
+      lastContacted:   f.LastTouchedOn || f.LastContacted || null,
+      createdAt:       item.createdDateTime || f.Created || null,
       modified:        item.lastModifiedDateTime || null,
-      leadType:        f.LeadType         || "",
-      currentMRC:      f.CurrentMRC       || "",
-      currentProducts: f.CurrentProducts  || "",
+      leadType:        f.Item_x0020_Type || f.LeadType || "",
+      currentMRC:      f.CurrentMRC    || "",
+      currentProducts: f.CurrentProducts || "",
     };
   }
 
@@ -152,8 +162,8 @@ const Graph = (() => {
         id:        item.id,
         leadId:    f.LeadId    || f.LeadID    || "",
         leadName:  f.LeadName  || f.Title     || "",
-        action:    f.ActionType    || f.Action  || "",
-        agent:     f.AgentEmail     || f.Agent || "",
+        action:    f.Action    || f.Activity  || "",
+        agent:     f.Agent     || f.AssignedTo || "",
         agentEmail:f.AgentEmail || "",
         notes:     f.Notes     || "",
         timestamp: item.createdDateTime || f.Created || null,
