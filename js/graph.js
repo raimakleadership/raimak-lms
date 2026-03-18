@@ -1,11 +1,12 @@
-// Raimak LMS - Graph API / SharePoint Data Layer v2.0
+// Raimak LMS - Graph API / SharePoint Data Layer v3.0
 
 const Graph = (() => {
 
   const base  = Config.sharePoint.graphBase;
   const host  = Config.sharePoint.hostname;
   const lists = Config.sharePoint.lists;
-  let siteIds = { leadship: null, team: null };
+  let siteIds    = { leadship: null, team: null };
+  let agentCache = null; // { name (lowercase) -> numeric sharepoint id }
 
   // ── Generic Fetch ──────────────────────────────────────────
   async function apiFetch(url, method = "GET", body = null) {
@@ -37,6 +38,34 @@ const Graph = (() => {
     ]);
     siteIds.leadship = s1.id;
     siteIds.team     = s2.id;
+  }
+
+  // ── Build Agent ID Cache from Contractor & Employee List ───
+  async function resolveAgentCache() {
+    if (agentCache) return agentCache;
+    await resolveSiteIds();
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.contractorList + "/items?expand=fields&$top=500";
+    const raw = await getAllItems(url);
+    agentCache = {};
+    raw.forEach(function(item) {
+      const name = (item.fields && (item.fields.Title || item.fields.ContractorName || "")).toLowerCase().trim();
+      if (name) agentCache[name] = parseInt(item.id, 10);
+    });
+    return agentCache;
+  }
+
+  // Resolve an agent name to its numeric SharePoint Lookup ID
+  async function resolveAgentId(agentName) {
+    if (!agentName) return null;
+    const cache = await resolveAgentCache();
+    return cache[agentName.toLowerCase().trim()] || null;
+  }
+
+  // ── Assign agent on a lead (handles Lookup field correctly) ─
+  async function assignAgent(itemId, agentName) {
+    const agentId = await resolveAgentId(agentName);
+    if (!agentId) throw new Error("Agent \"" + agentName + "\" not found in Contractor & Employee List.");
+    await updateLead(itemId, { Agent_x0020_AssignedLookupId: agentId });
   }
 
   // ── Paginate ───────────────────────────────────────────────
@@ -272,7 +301,7 @@ const Graph = (() => {
   }
 
   return {
-    getLeads, addLead, updateLead, deleteLead,
+    getLeads, addLead, updateLead, deleteLead, assignAgent,
     getNextLeadForAgent,
     getContractors,
     getActivityLog, logActivity,
