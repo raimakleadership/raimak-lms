@@ -123,6 +123,8 @@ const Graph = (() => {
       leadType:        f.Item_x0020_Type || f.LeadType || "",
       currentMRC:      f.CurrentMRC    || "",
       currentProducts: f.CurrentProducts || "",
+      cbr:             f.CBR           || "",
+      btn:             f.BTN           || "",
     };
   }
 
