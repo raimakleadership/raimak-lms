@@ -66,12 +66,7 @@ const Graph = (() => {
     const agentId = await resolveAgentId(agentName);
     console.log("assignAgent:", agentName, "→ ID:", agentId);
     if (!agentId) throw new Error("Agent \"" + agentName + "\" not found in Contractor & Employee List.");
-    // Try both common SharePoint Lookup ID field name formats
-    try {
-      await updateLead(itemId, { Agent_x0020_AssignedId: agentId });
-    } catch(e) {
-      await updateLead(itemId, { Agent_x0020_AssignedLookupId: agentId });
-    }
+    await updateLead(itemId, { Agent_x0020_AssignedLookupId: agentId });
   }
 
   // ── Paginate ───────────────────────────────────────────────
@@ -91,7 +86,7 @@ const Graph = (() => {
 
   async function getLeads() {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields&$top=500";
+    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields($expand=Agent_x0020_Assigned)&$top=500";
     const raw = await getAllItems(url);
     return raw.map(normalizeLeadItem);
   }
@@ -131,7 +126,6 @@ const Graph = (() => {
 
   function normalizeLeadItem(item) {
     const f    = item.fields || {};
-    if (f.Agent_x0020_Assigned || f.AgentAssigned) console.log("AGENT FIELDS:", JSON.stringify(Object.entries(f).filter(([k]) => k.toLowerCase().includes('agent'))));
     const first = f.FirstName || f.First_x0020_Name || "";
     const last  = f.LastName  || f.Last_x0020_Name  || "";
     const name  = (first + " " + last).trim() || f.Title || f.LeadName || "";
@@ -144,7 +138,7 @@ const Graph = (() => {
       phone:           f.Phone         || f.PhoneNumber  || "",
       status:          f.Status        || "New",
       source:          f.Campaign      || f.LeadSource   || f.Source || "",
-      assignedTo:      f.Agent_x0020_Assigned || f.AgentAssigned || f.AssignedTo || f.Agent || "",
+      assignedTo:      (f.Agent_x0020_Assigned && f.Agent_x0020_Assigned.LookupValue) || f.Agent_x0020_Assigned || "",
       notes:           f.Notes         || "",
       address:         f.WorkAddress   || f.Address      || "",
       city:            f.WorkCity      || f.City         || "",
