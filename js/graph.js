@@ -95,7 +95,6 @@ const Graph = (() => {
   }
 
   function normalizeLeadItem(item) {
-    console.log("FIELDS:", Object.keys(item.fields || {}));
     const f    = item.fields || {};
     const first = f.First_x0020_Name || f.FirstName || "";
     const last  = f.Last_x0020_Name  || f.LastName  || "";
