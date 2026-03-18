@@ -131,6 +131,7 @@ const Graph = (() => {
 
   function normalizeLeadItem(item) {
     const f    = item.fields || {};
+    if (f.Agent_x0020_Assigned || f.AgentAssigned) console.log("AGENT FIELDS:", JSON.stringify(Object.entries(f).filter(([k]) => k.toLowerCase().includes('agent'))));
     const first = f.FirstName || f.First_x0020_Name || "";
     const last  = f.LastName  || f.Last_x0020_Name  || "";
     const name  = (first + " " + last).trim() || f.Title || f.LeadName || "";
