@@ -455,6 +455,7 @@ function skipDripLead() {
 // ============================================================
 function renderMyLeads() {
   const user      = State.currentUser;
+  console.log("USER:", user && user.name, user && user.email, "LEADS:", State.leads.map(function(l){return l.assignedTo;}));
   const userName  = ((user && user.name)  || "").toLowerCase().trim();
   const userEmail = ((user && user.email) || "").toLowerCase().trim();
   const myLeads   = State.leads.filter(function(l) {
