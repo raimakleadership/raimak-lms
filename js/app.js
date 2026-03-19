@@ -520,7 +520,7 @@ function renderLeadFeedCard(myLeads, contactsToday) {
       <div class="feed-customer-info">
         <div class="form-group">
           <label>Monthly Recurring Charge (MRC)</label>
-          <input type="number" id="feed-mrc" class="form-input" placeholder="e.g. 89.99" value="${escHtml(lead.currentMRC||"")}">
+          <input type="text" id="feed-mrc" class="form-input" placeholder="e.g. $104.49" value="${escHtml(lead.currentMRC||"")}">
         </div>
         <div class="form-group">
           <label>Current Products</label>
@@ -1224,7 +1224,7 @@ function renderLeadModal(lead) {
       <div class="form-row">
         <div class="form-group">
           <label>Monthly Recurring Charge (MRC)</label>
-          <input type="number" id="f-mrc" class="form-input" placeholder="e.g. 89.99" value="${escHtml((lead&&lead.currentMRC)||"")}">
+          <input type="text" id="f-mrc" class="form-input" placeholder="e.g. $104.49" value="${escHtml((lead&&lead.currentMRC)||"")}">
         </div>
         <div class="form-group">
           <label>Current Products</label>
