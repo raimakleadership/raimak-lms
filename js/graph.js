@@ -149,7 +149,7 @@ const Graph = (() => {
       createdAt:       item.createdDateTime || f.Created || null,
       modified:        item.lastModifiedDateTime || null,
       leadType:        f.Lead_x0020_Type || f.Type || f.Item_x0020_Type || f.LeadType || "",
-      currentMRC:      f.CurrentMRC    || "",
+      currentMRC:      f.CurrentMRC || f.Current_x004D_RC || f.MRC || f.CurrentMrc || "",
       currentProducts: f.CurrentProducts || "",
     };
   }
