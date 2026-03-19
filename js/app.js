@@ -573,14 +573,12 @@ async function agentUpdateStatus(leadId, newStatus) {
     const notes    = (document.getElementById("feed-notes")    || {}).value || "";
     const cbr      = (document.getElementById("feed-cbr")      || {}).value || "";
     const btn      = (document.getElementById("feed-btn")      || {}).value || "";
-    await Graph.updateLead(leadId, {
-      Status:                newStatus,
-      LastTouchedOn:         today,
-      MonthlyRecurringCharge_x0028_MRC:            mrc,
-      CurrentProducts:       products,
-      CBR:                   cbr,
-      BTN:                   btn,
-    });
+    const saveFields = { Status: newStatus, LastTouchedOn: today };
+    if (mrc)      saveFields["MonthlyRecurringCharge_x0028_MRC"] = mrc;
+    if (products) saveFields["CurrentProducts"] = products;
+    if (cbr)      saveFields["CBR"] = cbr;
+    if (btn)      saveFields["BTN"] = btn;
+    await Graph.updateLead(leadId, saveFields);
     await Graph.logActivity({
       LeadId:     leadId,
       LeadName:   lead.name,
@@ -1286,19 +1284,30 @@ function collectLeadForm() {
   const name      = ((document.getElementById("f-name")||{}).value||"").trim();
   const agentName = (document.getElementById("f-assigned")||{}).value || "";
   if (!name) { UI.showToast("Name is required.", "error"); return null; }
-  return {
-    Title:           name,
-    Lead_x0020_Type: (document.getElementById("f-leadtype")     ||{}).value || "",
-    Email:           ((document.getElementById("f-email")       ||{}).value||"").trim(),
-    Phone:           ((document.getElementById("f-phone")       ||{}).value||"").trim(),
-    Status:          (document.getElementById("f-status")       ||{}).value || "New",
-    Campaign:        (document.getElementById("f-source")       ||{}).value || "",
-    LastTouchedOn:   (document.getElementById("f-lastcontacted")||{}).value || "",
-    MonthlyRecurringCharge_x0028_MRC:      (document.getElementById("f-mrc")          ||{}).value || "",
-    CurrentProducts: (document.getElementById("f-products")     ||{}).value || "",
-    Notes:           ((document.getElementById("f-notes")       ||{}).value||"").trim(),
-    _agentName:      agentName, // passed separately to assignAgent
+
+  // Only include fields that have values to avoid 400 errors from unrecognised columns
+  const fields = { Title: name, _agentName: agentName };
+
+  const add = function(key, elId, trim) {
+    const el  = document.getElementById(elId);
+    const val = el ? (trim ? (el.value||"").trim() : (el.value||"")) : "";
+    if (val) fields[key] = val;
   };
+
+  add("Lead_x0020_Type",                  "f-leadtype");
+  add("Email",                             "f-email",        true);
+  add("Phone",                             "f-phone",        true);
+  add("Status",                            "f-status");
+  add("Campaign",                          "f-source");
+  add("LastTouchedOn",                     "f-lastcontacted");
+  add("MonthlyRecurringCharge_x0028_MRC",  "f-mrc",          true);
+  add("CurrentProducts",                   "f-products");
+  add("Notes",                             "f-notes",        true);
+
+  // Always include Status so it doesn't get lost
+  if (!fields.Status) fields.Status = "New";
+
+  return fields;
 }
 
 async function deleteLead(id) {
