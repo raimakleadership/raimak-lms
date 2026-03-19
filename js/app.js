@@ -454,9 +454,12 @@ function skipDripLead() {
 //  AGENT — MY LEADS
 // ============================================================
 function renderMyLeads() {
-  const user    = State.currentUser;
-  const myLeads = State.leads.filter(function(l) {
-    return l.assignedTo === (user && user.name) && !Config.terminalStatuses.includes(l.status);
+  const user      = State.currentUser;
+  const userName  = ((user && user.name)  || "").toLowerCase().trim();
+  const userEmail = ((user && user.email) || "").toLowerCase().trim();
+  const myLeads   = State.leads.filter(function(l) {
+    const assigned = (l.assignedTo || "").toLowerCase().trim();
+    return assigned && (assigned === userName || assigned === userEmail) && !Config.terminalStatuses.includes(l.status);
   });
   const contactsToday = Graph.agentContactsToday((user && user.name) || "", State.activityLog);
   const atLimit       = contactsToday >= Config.rules.maxContactsPerDay;
