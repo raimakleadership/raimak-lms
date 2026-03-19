@@ -423,10 +423,10 @@ async function confirmDripAssign(leadId) {
   try {
     await Graph.assignAgent(leadId, agent);
     await Graph.logActivity({
-      LeadId:   leadId,
-      LeadName: lead ? lead.name : "",
-      Action:   "Drip Assigned",
-      Agent:    agent,
+      LeadID: leadId,
+      Title: lead ? lead.name : "",
+      ActionType: "Drip Assigned",
+      AgentEmail: agent,
       Notes:    "Drip-assigned by " + ((State.currentUser && State.currentUser.name) || "Admin"),
     });
     UI.showToast(lead.name + " assigned to " + agent, "success");
@@ -580,10 +580,9 @@ async function agentUpdateStatus(leadId, newStatus) {
     if (btn)      saveFields["BTN"] = btn;
     await Graph.updateLead(leadId, saveFields);
     await Graph.logActivity({
-      LeadId:     leadId,
-      LeadName:   lead.name,
-      Action:     "Status: " + newStatus,
-      Agent:      (user && user.name) || "",
+      LeadID:     leadId,
+      Title:      lead.name,
+      ActionType: "Status: " + newStatus,
       AgentEmail: (user && user.email) || "",
       Notes:      notes,
     });
@@ -614,7 +613,7 @@ async function agentSaveNote(leadId) {
       CBR:             (cbr && cbr.value) || "",
       BTN:             (btn && btn.value) || "",
     });
-    await Graph.logActivity({ LeadId: leadId, LeadName: lead.name, Action: "Note Added", Agent: (State.currentUser && State.currentUser.name) || "", Notes: notes.value.trim() });
+    await Graph.logActivity({ LeadID: leadId, Title: lead.name, ActionType: "Note Added", AgentEmail: (State.currentUser && State.currentUser.email) || "", Notes: notes.value.trim() });
     UI.showToast("Saved!", "success");
     await loadAllData();
     renderMyLeads();
@@ -705,7 +704,7 @@ async function assignLead(leadId) {
   setLoading(true);
   try {
     await Graph.assignAgent(leadId, agent);
-    await Graph.logActivity({ LeadId: leadId, LeadName: lead ? lead.name : "", Action: "Assigned", Agent: agent, Notes: "Assigned by " + ((State.currentUser && State.currentUser.name) || "Admin") });
+    await Graph.logActivity({ LeadID: leadId, Title: lead ? lead.name : "", ActionType: "Assigned", AgentEmail: (State.currentUser && State.currentUser.email) || "", Notes: "Assigned by " + ((State.currentUser && State.currentUser.name) || "Admin") });
     UI.showToast("Assigned to " + agent, "success");
     await loadAllData();
     renderAssignLeads();
