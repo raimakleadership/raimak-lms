@@ -220,20 +220,25 @@ const Graph = (() => {
 
   // Get daily activity stats per agent for the report
   async function getDailyStats() {
-    const log = await getActivityLog(500);
+    const log   = await getActivityLog(500);
     const today = new Date().toDateString();
-    const todayEntries = log.filter(e => e.timestamp && new Date(e.timestamp).toDateString() === today);
+    const todayEntries = log.filter(function(e) { return e.timestamp && new Date(e.timestamp).toDateString() === today; });
 
-    // Count contacts per agent today
     const stats = {};
     for (const entry of todayEntries) {
       const agent = entry.agent || "Unknown";
-      if (!stats[agent]) stats[agent] = { agent, contacts: 0, sold: 0, actions: [] };
-      stats[agent].contacts++;
+      if (!stats[agent]) stats[agent] = { agent, contacts: 0, sold: 0, actions: [], uniqueLeads: new Set() };
+      // Count unique leads touched, not total log entries
+      if (entry.leadId) stats[agent].uniqueLeads.add(entry.leadId);
       if (entry.action === "Status: " + Config.soldStatus) stats[agent].sold++;
       stats[agent].actions.push(entry);
     }
-    return Object.values(stats).sort((a, b) => b.contacts - a.contacts);
+    // Convert Set size to contacts count
+    Object.values(stats).forEach(function(s) {
+      s.contacts = s.uniqueLeads.size;
+      delete s.uniqueLeads;
+    });
+    return Object.values(stats).sort(function(a, b) { return b.contacts - a.contacts; });
   }
 
   // ============================================================
@@ -288,14 +293,21 @@ const Graph = (() => {
     return daysSince < Config.rules.coolOffDays;
   }
 
-  // Count how many leads an agent contacted today
+  // Count unique leads an agent contacted today (not total log entries)
   function agentContactsToday(agentName, activityLog) {
-    const today = new Date().toDateString();
-    return activityLog.filter(function(e) {
-      return e.agent === agentName &&
-             e.timestamp &&
-             new Date(e.timestamp).toDateString() === today;
-    }).length;
+    const today      = new Date().toDateString();
+    const agentLower = (agentName || "").toLowerCase().trim();
+    const uniqueLeads = new Set();
+    activityLog.forEach(function(e) {
+      const entryAgent = (e.agent || "").toLowerCase().trim();
+      if ((entryAgent === agentLower) &&
+          e.timestamp &&
+          new Date(e.timestamp).toDateString() === today &&
+          e.leadId) {
+        uniqueLeads.add(e.leadId);
+      }
+    });
+    return uniqueLeads.size;
   }
 
   return {
