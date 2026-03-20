@@ -458,8 +458,6 @@ function renderMyLeads() {
   const userName  = ((user && user.name)  || "").toLowerCase().trim();
   const userEmail = ((user && user.email) || "").toLowerCase().trim();
 
-  // Find the agent's name from the contractors list by matching email
-  // This handles cases where Microsoft display name differs from the name used in assignment
   const contractor = State.contractors.find(function(c) {
     return (c.email || "").toLowerCase().trim() === userEmail ||
            (c.name  || "").toLowerCase().trim() === userName;
@@ -497,15 +495,45 @@ function renderMyLeads() {
     <div id="lead-feed-wrap">${renderLeadFeedCard(myLeads, contactsToday)}</div>
 
     <div class="card" style="margin-top:20px">
-      <div class="card-header"><h2 class="card-title">All My Assigned Leads</h2></div>
-      ${renderLeadsTable(myLeads, false, true)}
+      <div class="card-header">
+        <h2 class="card-title">All My Assigned Leads</h2>
+        <div class="search-wrap" style="max-width:280px">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <input type="text" class="search-input" placeholder="Search to pull up a lead..." oninput="searchMyLeads(this.value)" id="my-leads-search" style="padding-left:32px;font-size:12px">
+        </div>
+      </div>
+      <div id="my-leads-table">${renderLeadsTable(myLeads, false, true)}</div>
     </div>
   `;
+
+  // Store myLeads for search
+  window._myLeads = myLeads;
 }
 
-function renderLeadFeedCard(myLeads, contactsToday) {
-  const lead    = myLeads.find(function(l) { return !Graph.isInCoolOff(l); });
+function searchMyLeads(q) {
+  const leads   = window._myLeads || [];
+  const filtered = !q.trim() ? leads : leads.filter(function(l) {
+    return l.name.toLowerCase().includes(q.toLowerCase()) ||
+           (l.phone || "").includes(q) ||
+           (l.address || "").toLowerCase().includes(q.toLowerCase());
+  });
+  const wrap = document.getElementById("my-leads-table");
+  if (wrap) wrap.innerHTML = renderLeadsTable(filtered, false, true);
+
+  // If exactly one result found, load it in the feed card
+  if (filtered.length === 1) {
+    const feedWrap = document.getElementById("lead-feed-wrap");
+    if (feedWrap) feedWrap.innerHTML = renderLeadFeedCard(filtered, 0, true);
+  }
+}
+
+// Staged status — stored here until Save is clicked
+let _stagedStatus = null;
+
+function renderLeadFeedCard(myLeads, contactsToday, forceFirst) {
+  const lead    = forceFirst ? myLeads[0] : myLeads.find(function(l) { return !Graph.isInCoolOff(l); });
   const atLimit = contactsToday >= Config.rules.maxContactsPerDay;
+  _stagedStatus = null;
 
   if (!lead) return `
     <div class="feed-card feed-card-empty">
@@ -520,20 +548,28 @@ function renderLeadFeedCard(myLeads, contactsToday) {
         <span class="feed-label">Next Lead</span>
         <div style="display:flex;gap:6px">
           ${lead.leadType ? `<span class="lead-type-badge lead-type-${(lead.leadType||"").toLowerCase()}">${escHtml(lead.leadType)}</span>` : ""}
-          <span class="status-badge status-${lead.status.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"")}">${lead.status}</span>
+          <span class="status-badge status-${lead.status.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"")}" id="feed-current-status">${lead.status}</span>
         </div>
       </div>
       <div class="feed-name">${escHtml(lead.name)}</div>
       <div class="feed-meta-row">
-        ${lead.phone ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.96a16 16 0 0 0 6 6l.92-.92a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16.92z" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.phone)}</span>` : ""}
-        ${lead.email ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.email)}</span>` : ""}
-        ${lead.address ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.address)}${lead.city ? ", " + escHtml(lead.city) : ""}${lead.state ? " " + escHtml(lead.state) : ""}${lead.zip ? " " + escHtml(lead.zip) : ""}</span>` : ""}
+        ${lead.phone    ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.6 1.22h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.96a16 16 0 0 0 6 6l.92-.92a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16.92z" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.phone)}</span>` : ""}
+        ${lead.email    ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" stroke="currentColor" stroke-width="2"/><polyline points="22,6 12,13 2,6" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.email)}</span>` : ""}
+        ${lead.address  ? `<span class="feed-meta"><svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>${escHtml(lead.address)}${lead.city ? ", " + escHtml(lead.city) : ""}${lead.state ? " " + escHtml(lead.state) : ""}${lead.zip ? " " + escHtml(lead.zip) : ""}</span>` : ""}
       </div>
 
       ${lead.notes ? `<div class="feed-notes">${escHtml(lead.notes)}</div>` : ""}
 
       <!-- Customer info boxes -->
       <div class="feed-customer-info">
+        <div class="form-group">
+          <label>CBR</label>
+          <input type="text" id="feed-cbr" class="form-input" placeholder="Enter CBR" value="${escHtml(lead.cbr||"")}">
+        </div>
+        <div class="form-group">
+          <label>BTN</label>
+          <input type="text" id="feed-btn" class="form-input" placeholder="Enter BTN" value="${escHtml(lead.btn||"")}">
+        </div>
         <div class="form-group">
           <label>Monthly Recurring Charge (MRC)</label>
           <input type="text" id="feed-mrc" class="form-input" placeholder="e.g. $104.49" value="${escHtml(lead.currentMRC||"")}">
@@ -545,56 +581,105 @@ function renderLeadFeedCard(myLeads, contactsToday) {
             ${Config.currentProducts.map(function(p) { return `<option value="${p}" ${lead.currentProducts===p?"selected":""}>${p}</option>`; }).join("")}
           </select>
         </div>
-        <div class="form-group">
-          <label>CBR</label>
-          <input type="text" id="feed-cbr" class="form-input" placeholder="Enter CBR" value="${escHtml(lead.cbr||"")}">
-        </div>
-        <div class="form-group">
-          <label>BTN</label>
-          <input type="text" id="feed-btn" class="form-input" placeholder="Enter BTN" value="${escHtml(lead.btn||"")}">
-        </div>
       </div>
 
       <div class="feed-status-row">
-        <span class="feed-label">Update Status</span>
-        <div class="feed-status-buttons">
+        <span class="feed-label">Select Status — click Save to confirm</span>
+        <div class="feed-status-buttons" id="feed-status-buttons">
           ${Config.leadStatuses.filter(function(s) { return s !== "New"; }).map(function(s) {
-            const cls = "status-btn-" + s.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"");
-            return `<button class="status-btn ${cls}" onclick="agentUpdateStatus('${lead.id}','${s}')"
-              ${atLimit && !Config.terminalStatuses.includes(s) ? "disabled title='Daily limit reached'" : ""}>${s}</button>`;
+            const cls     = "status-btn-" + s.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"");
+            const isTDM   = s === "TDM";
+            const disabled = (atLimit && !Config.terminalStatuses.includes(s)) || false;
+            return `<button class="status-btn ${cls}" id="sbtn-${s.replace(/\s+/g,"-")}"
+              onclick="stageStatus('${lead.id}','${s}')"
+              ${disabled ? "disabled title='Daily limit reached'" : ""}
+              ${isTDM ? "title='TDM leads are returned to admin queue'" : ""}
+              >${s}${isTDM ? " ↩" : ""}</button>`;
           }).join("")}
         </div>
       </div>
 
       <div class="feed-note-row" style="margin-top:12px">
         <textarea id="feed-notes" class="form-input form-textarea" placeholder="Add a note..."></textarea>
-        <button class="btn-primary" onclick="agentSaveNote('${lead.id}')">Save</button>
+        <button class="btn-primary" id="feed-save-btn" onclick="agentSaveAll('${lead.id}')">Save</button>
+      </div>
+      <div id="feed-staged-notice" style="display:none;margin-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--amber)">
+        ⚡ Status staged — click Save to confirm
       </div>
     </div>`;
 }
+}
 
-async function agentUpdateStatus(leadId, newStatus) {
-  const user = State.currentUser;
+// Stage a status selection — highlight the button, don't save yet
+function stageStatus(leadId, newStatus) {
   const lead = State.leads.find(function(l) { return l.id === leadId; });
   if (!lead) return;
   if (Graph.isInCoolOff(lead) && !Config.terminalStatuses.includes(newStatus)) {
     UI.showToast("This lead is in the " + Config.rules.coolOffDays + "-day cool-off period.", "error");
     return;
   }
+  _stagedStatus = newStatus;
+
+  // Highlight selected button, clear others
+  document.querySelectorAll(".status-btn").forEach(function(btn) {
+    btn.style.borderColor = "";
+    btn.style.color       = "";
+    btn.style.background  = "";
+    btn.style.boxShadow   = "";
+  });
+  const selectedBtn = document.getElementById("sbtn-" + newStatus.replace(/\s+/g, "-"));
+  if (selectedBtn) {
+    selectedBtn.style.borderColor = "var(--cyan)";
+    selectedBtn.style.color       = "var(--cyan)";
+    selectedBtn.style.background  = "var(--cyan-dim)";
+    selectedBtn.style.boxShadow   = "0 0 12px var(--cyan-glow)";
+  }
+
+  // Show staged notice
+  const notice = document.getElementById("feed-staged-notice");
+  if (notice) {
+    notice.style.display = "block";
+    notice.textContent   = "⚡ \"" + newStatus + "\" staged — click Save to confirm";
+  }
+
+  // Update the current status badge preview
+  const badge = document.getElementById("feed-current-status");
+  if (badge) {
+    badge.textContent  = newStatus + " (staged)";
+    badge.style.opacity = "0.7";
+  }
+}
+
+// Save everything — status + all fields — in one shot
+async function agentSaveAll(leadId) {
+  const user = State.currentUser;
+  const lead = State.leads.find(function(l) { return l.id === leadId; });
+  if (!lead) return;
+
+  const newStatus = _stagedStatus || lead.status;
+  const mrc       = (document.getElementById("feed-mrc")      || {}).value || "";
+  const products  = (document.getElementById("feed-products") || {}).value || "";
+  const notes     = (document.getElementById("feed-notes")    || {}).value || "";
+  const cbr       = (document.getElementById("feed-cbr")      || {}).value || "";
+  const btn       = (document.getElementById("feed-btn")      || {}).value || "";
+
   setLoading(true);
   try {
-    const today    = new Date().toISOString().split("T")[0];
-    const mrc      = (document.getElementById("feed-mrc")      || {}).value || "";
-    const products = (document.getElementById("feed-products") || {}).value || "";
-    const notes    = (document.getElementById("feed-notes")    || {}).value || "";
-    const cbr      = (document.getElementById("feed-cbr")      || {}).value || "";
-    const btn      = (document.getElementById("feed-btn")      || {}).value || "";
+    const today      = new Date().toISOString().split("T")[0];
     const saveFields = { Status: newStatus, LastTouchedOn: today };
     if (mrc)      saveFields["MonthlyRecurringCharge_x0028_MRC"] = mrc;
     if (products) saveFields["CurrentProducts"] = products;
     if (cbr)      saveFields["CBR"] = cbr;
     if (btn)      saveFields["BTN"] = btn;
+    if (notes)    saveFields["Notes"] = notes;
     await Graph.updateLead(leadId, saveFields);
+
+    // TDM — unassign and flag for admin
+    if (newStatus === "TDM") {
+      await Graph.assignAgent(leadId, "");
+      UI.showToast("TDM — lead returned to admin queue.", "info");
+    }
+
     await Graph.logActivity({
       LeadID:     leadId,
       Title:      lead.name,
@@ -602,8 +687,11 @@ async function agentUpdateStatus(leadId, newStatus) {
       AgentEmail: (user && user.email) || "",
       Notes:      notes,
     });
+
     if (newStatus === Config.soldStatus) UI.showConfetti();
-    UI.showToast("Marked as " + newStatus, "success");
+    else UI.showToast("Saved!", "success");
+
+    _stagedStatus = null;
     await loadAllData();
     renderMyLeads();
   } catch (err) {
@@ -611,32 +699,6 @@ async function agentUpdateStatus(leadId, newStatus) {
   } finally { setLoading(false); }
 }
 
-async function agentSaveNote(leadId) {
-  const notes    = document.getElementById("feed-notes");
-  const mrc      = document.getElementById("feed-mrc");
-  const products = document.getElementById("feed-products");
-  const cbr      = document.getElementById("feed-cbr");
-  const btn      = document.getElementById("feed-btn");
-  if (!notes || !notes.value.trim()) { UI.showToast("Please add a note first.", "error"); return; }
-  const lead = State.leads.find(function(l) { return l.id === leadId; });
-  if (!lead) return;
-  setLoading(true);
-  try {
-    await Graph.updateLead(leadId, {
-      Notes:           notes.value.trim(),
-      MonthlyRecurringCharge_x0028_MRC:      (mrc && mrc.value) || "",
-      CurrentProducts: (products && products.value) || "",
-      CBR:             (cbr && cbr.value) || "",
-      BTN:             (btn && btn.value) || "",
-    });
-    await Graph.logActivity({ LeadID: leadId, Title: lead.name, ActionType: "Note Added", AgentEmail: (State.currentUser && State.currentUser.email) || "", Notes: notes.value.trim() });
-    UI.showToast("Saved!", "success");
-    await loadAllData();
-    renderMyLeads();
-  } catch (err) {
-    UI.showToast("Failed: " + err.message, "error");
-  } finally { setLoading(false); }
-}
 
 // ============================================================
 //  ADMIN — ASSIGN LEADS
