@@ -539,6 +539,7 @@ body::before {
 .status-pending-order     { background: rgba(27,79,138,0.2);     color: #7EC8E3; border: 1px solid rgba(126,200,227,0.2); }
 .status-fnq               { background: rgba(100,116,139,0.15);  color: #94A3B8; border: 1px solid rgba(100,116,139,0.2); }
 .status-already-has-fiber { background: rgba(16,240,128,0.08);   color: #5EEAD4; border: 1px solid rgba(94,234,212,0.2); }
+.status-tdm               { background: rgba(255,179,0,0.12);    color: var(--amber); border: 1px solid rgba(255,179,0,0.3); }
 
 /* Lead type badges */
 .lead-type-badge {
@@ -1025,6 +1026,7 @@ body::before {
 .status-btn-pending-order:hover:not(:disabled)       { background: rgba(27,79,138,0.2);   border-color: #7EC8E3;             color: #7EC8E3; }
 .status-btn-fnq:hover:not(:disabled)                 { background: rgba(100,116,139,0.15);border-color: #94A3B8;             color: #94A3B8; }
 .status-btn-already-has-fiber:hover:not(:disabled)   { background: rgba(94,234,212,0.1);  border-color: #5EEAD4;             color: #5EEAD4; }
+.status-btn-tdm:hover:not(:disabled)                  { background: var(--amber-dim);      border-color: var(--amber);        color: var(--amber); box-shadow: 0 4px 16px rgba(255,179,0,0.2); }
 
 .feed-customer-info {
   display: grid;
