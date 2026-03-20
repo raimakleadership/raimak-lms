@@ -608,7 +608,6 @@ function renderLeadFeedCard(myLeads, contactsToday, forceFirst) {
       </div>
     </div>`;
 }
-}
 
 // Stage a status selection — highlight the button, don't save yet
 function stageStatus(leadId, newStatus) {
