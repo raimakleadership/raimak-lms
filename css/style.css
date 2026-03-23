@@ -1317,7 +1317,8 @@ body::before {
 .main-content .top5-row:hover .top5-count      { color: #00FF88; }
 .main-content .top5-row:hover .sale-time       { color: #8EA5C8; }
 
-/* ── Pipeline Status — light blue-grey background so New badge reads ─ */
-.main-content .status-breakdown { background: #C5D8F0; border-radius: 0 0 10px 10px; padding: 12px 20px 16px; }
-.main-content .status-bar-wrap  { background: #A0BCDC; }
-.main-content .status-count     { color: #1A2E50; }
+/* ── Pipeline Status — navy background with green bars ─ */
+.main-content .status-breakdown { background: #0D1B3E; border-radius: 0 0 10px 10px; padding: 12px 20px 16px; }
+.main-content .status-bar-wrap  { background: #1E3060; }
+.main-content .status-bar       { background: linear-gradient(90deg, #00CC66, #00FF88); box-shadow: 0 0 6px rgba(0,255,136,0.4); }
+.main-content .status-count     { color: #FFFFFF; }
