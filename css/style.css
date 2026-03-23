@@ -8,12 +8,12 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:         #060B14;
-  --surface:    #0A1020;
-  --card:       #0F1829;
-  --card-hover: #141F34;
-  --border:     #1A2640;
-  --border-hi:  #243352;
+  --bg:         #080E1A;
+  --surface:    #0C1422;
+  --card:       #111D2E;
+  --card-hover: #172338;
+  --border:     #1E2E48;
+  --border-hi:  #2A3D60;
   --glow-line:  #1E3A6E;
 
   /* Brand blues */
@@ -25,12 +25,12 @@
   --blue-dim:   rgba(37,99,176,0.15);
 
   /* Accent — electric cyan for gamified feel */
-  --cyan:       #00D4FF;
+  --cyan:       #00E5FF;
   --cyan-dim:   rgba(0,212,255,0.1);
   --cyan-glow:  rgba(0,212,255,0.25);
 
   /* Status colours */
-  --green:      #10F080;
+  --green:      #00FF88;
   --green-dim:  rgba(16,240,128,0.1);
   --red:        #FF4757;
   --red-dim:    rgba(255,71,87,0.12);
@@ -38,9 +38,9 @@
   --amber-dim:  rgba(255,179,0,0.12);
   --purple:     #B48FFF;
 
-  --text-1:     #E8F0FF;
-  --text-2:     #6B85B0;
-  --text-3:     #334466;
+  --text-1:     #F0F6FF;
+  --text-2:     #7A98C8;
+  --text-3:     #3D5280;
 
   --radius-sm:  6px;
   --radius:     10px;
@@ -264,10 +264,10 @@ body::before {
 /* ── Main Content ───────────────────────────────────────────── */
 .main-content {
   overflow-y: auto;
-  background: var(--bg);
-  background-image: radial-gradient(ellipse 80% 40% at 50% 0%, rgba(27,79,138,0.12) 0%, transparent 60%);
+  background: #FFFFFF;
   position: relative;
   padding: 28px 32px 40px;
+  color: #1A2640;
 }
 
 /* ── View Header ────────────────────────────────────────────── */
@@ -530,16 +530,17 @@ body::before {
   text-transform: uppercase;
 }
 
-.status-new               { background: rgba(59,130,246,0.15);   color: var(--blue-bright); border: 1px solid rgba(59,130,246,0.2); }
-.status-1st-contact       { background: rgba(180,143,255,0.12);  color: var(--purple); border: 1px solid rgba(180,143,255,0.2); }
-.status-2nd-contact       { background: rgba(0,212,255,0.1);     color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
-.status-3rd-contact       { background: rgba(255,179,0,0.12);    color: var(--amber); border: 1px solid rgba(255,179,0,0.2); }
-.status-do-not-call       { background: var(--red-dim);           color: var(--red); border: 1px solid rgba(255,71,87,0.2); }
-.status-sold              { background: var(--green-dim);          color: var(--green); border: 1px solid rgba(16,240,128,0.2); }
-.status-pending-order     { background: rgba(27,79,138,0.2);     color: #7EC8E3; border: 1px solid rgba(126,200,227,0.2); }
-.status-fnq               { background: rgba(100,116,139,0.15);  color: #94A3B8; border: 1px solid rgba(100,116,139,0.2); }
-.status-already-has-fiber { background: rgba(16,240,128,0.08);   color: #5EEAD4; border: 1px solid rgba(94,234,212,0.2); }
-.status-tdm               { background: rgba(255,179,0,0.12);    color: var(--amber); border: 1px solid rgba(255,179,0,0.3); }
+.status-new                    { background: rgba(255,255,255,0.12);  color: #FFFFFF; border: 1px solid rgba(255,255,255,0.35); text-shadow: 0 0 8px rgba(255,255,255,0.5); }
+.status-1st-contact            { background: rgba(255,200,0,0.15);    color: #FFD700; border: 1px solid rgba(255,200,0,0.35); }
+.status-2nd-contact            { background: rgba(255,200,0,0.15);    color: #FFD700; border: 1px solid rgba(255,200,0,0.35); }
+.status-3rd-contact            { background: rgba(255,200,0,0.15);    color: #FFD700; border: 1px solid rgba(255,200,0,0.35); }
+.status-do-not-call            { background: rgba(255,50,50,0.18);    color: #FF4444; border: 1px solid rgba(255,50,50,0.4); box-shadow: 0 0 8px rgba(255,50,50,0.2); }
+.status-sold                   { background: rgba(16,240,128,0.15);   color: #10F080; border: 1px solid rgba(16,240,128,0.4); box-shadow: 0 0 8px rgba(16,240,128,0.2); }
+.status-pending-order          { background: rgba(255,200,0,0.15);    color: #FFD700; border: 1px solid rgba(255,200,0,0.35); }
+.status-fnq                    { background: rgba(255,50,50,0.18);    color: #FF4444; border: 1px solid rgba(255,50,50,0.4); }
+.status-already-has-fiber      { background: rgba(255,50,50,0.18);    color: #FF4444; border: 1px solid rgba(255,50,50,0.4); }
+.status-tdm                    { background: rgba(0,212,255,0.12);    color: var(--cyan); border: 1px solid rgba(0,212,255,0.35); }
+.status-requested-call-back    { background: rgba(41,98,255,0.18);    color: #4D79FF; border: 1px solid rgba(41,98,255,0.4); box-shadow: 0 0 8px rgba(41,98,255,0.2); }
 
 /* Lead type badges */
 .lead-type-badge {
@@ -1241,3 +1242,58 @@ body::before {
   .form-row { grid-template-columns: 1fr; }
   .feed-customer-info { grid-template-columns: 1fr; }
 }
+
+/* ── White Main Content Overrides ───────────────────────────── */
+.main-content .card              { background: #FFFFFF; border: 1px solid #D0DCF0; box-shadow: 0 2px 12px rgba(13,27,62,0.08); }
+.main-content .card:hover        { box-shadow: 0 4px 20px rgba(13,27,62,0.12); }
+.main-content .card-header       { background: #F4F7FD; border-bottom: 1px solid #D0DCF0; }
+.main-content .card-title        { color: #0D1B3E; }
+.main-content .card-meta         { color: #6B85B0; }
+.main-content .view-title        { color: #0D1B3E; }
+.main-content .view-subtitle     { color: #2563B0; }
+.main-content .kpi-card          { background: #FFFFFF; border: 1px solid #D0DCF0; box-shadow: 0 2px 12px rgba(13,27,62,0.08); }
+.main-content .kpi-card:hover    { background: #F4F7FD; }
+.main-content .kpi-label         { color: #6B85B0; }
+.main-content .kpi-value         { color: #0D1B3E; }
+.main-content .kpi-sub           { color: #8EA5C8; }
+.main-content .data-table th     { background: #F4F7FD; color: #6B85B0; border-bottom: 1px solid #D0DCF0; }
+.main-content .data-table td     { color: #1A2640; border-bottom: 1px solid #EEF2FA; }
+.main-content .lead-row:hover td { background: #F4F7FD; }
+.main-content .lead-name         { color: #0D1B3E; }
+.main-content .lead-source       { color: #8EA5C8; }
+.main-content .td-mono           { color: #4A6080; }
+.main-content .feed-card         { background: #FFFFFF; border: 1px solid #D0DCF0; box-shadow: 0 4px 20px rgba(13,27,62,0.1); }
+.main-content .feed-name         { color: #0D1B3E; }
+.main-content .feed-label        { color: #2563B0; }
+.main-content .feed-meta         { background: #F4F7FD; border: 1px solid #D0DCF0; color: #3D5280; }
+.main-content .feed-notes        { background: #F4F7FD; border: 1px solid #D0DCF0; color: #4A6080; }
+.main-content .feed-customer-info{ background: #F4F7FD; border: 1px solid #D0DCF0; }
+.main-content .form-input        { background: #FFFFFF; border: 1px solid #C5D4EC; color: #1A2640; }
+.main-content .form-input:focus  { border-color: #2563B0; box-shadow: 0 0 0 2px rgba(37,99,176,0.15); }
+.main-content .form-group label  { color: #6B85B0; }
+.main-content .status-btn        { background: #F4F7FD; border: 1px solid #D0DCF0; color: #3D5280; }
+.main-content .status-btn:hover:not(:disabled) { background: #EEF2FA; }
+.main-content .search-input      { background: #FFFFFF; border: 1px solid #C5D4EC; color: #1A2640; }
+.main-content .filter-select     { background: #FFFFFF; border: 1px solid #C5D4EC; color: #1A2640; }
+.main-content .alert-info        { background: rgba(37,99,176,0.08); border: 1px solid rgba(37,99,176,0.2); color: #2563B0; }
+.main-content .empty-state       { color: #8EA5C8; }
+.main-content .btn-ghost         { background: #FFFFFF; border: 1px solid #D0DCF0; color: #3D5280; }
+.main-content .btn-ghost:hover   { background: #F4F7FD; color: #0D1B3E; }
+.main-content .drip-card         { background: #FFFFFF; border: 1px solid #2563B0; box-shadow: 0 0 20px rgba(37,99,176,0.1); }
+.main-content .drip-title        { color: #2563B0; }
+.main-content .drip-lead-name    { color: #0D1B3E; }
+.main-content .top5-name         { color: #0D1B3E; }
+.main-content .sale-name         { color: #0D1B3E; }
+.main-content .sale-agent        { color: #2563B0; }
+.main-content .agent-name-sm     { color: #0D1B3E; }
+.main-content .contractor-card   { background: #FFFFFF; border: 1px solid #D0DCF0; }
+.main-content .contractor-card:hover { background: #F4F7FD; }
+.main-content .contractor-name   { color: #0D1B3E; }
+.main-content .contractor-email  { color: #8EA5C8; }
+.main-content .action-badge      { background: #EEF2FA; color: #3D5280; border: 1px solid #D0DCF0; }
+.main-content .load-bar-wrap     { background: #E2EAF6; }
+.main-content .status-row        {}
+.main-content .status-count      { color: #4A6080; }
+.main-content .bulk-bar          { background: #0D1B3E; border: 1px solid #2563B0; }
+.main-content .assign-agent-card { background: #FFFFFF; border: 1px solid #D0DCF0; }
+.main-content .assign-count      { color: #8EA5C8; }
