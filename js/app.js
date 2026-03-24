@@ -545,7 +545,7 @@ function renderMyLeads() {
     <div id="lead-feed-wrap">${renderLeadFeedCard(myLeads, contactsToday)}</div>
 
     <!-- Search — only visible after save -->
-    <div id="lead-search-section" style="display:none;margin-top:20px">
+    <div id="lead-search-section" style="display:${isAdmin() ? 'block' : 'none'};margin-top:20px">
       <div class="card">
         <div class="card-header">
           <h2 class="card-title">Find a Lead</h2>
@@ -796,16 +796,12 @@ async function agentSaveAll(leadId) {
       Notes:      notes,
     });
 
-  if (newStatus === Config.soldStatus) {
-  UI.showConfetti();
-  UI.showSaleBanner(lead.name, (user && user.name) || "");
-
-  const agentName = (user && user.name) || "";
-  const program   = lead.leadType || "Frontier"; // adjust default if needed
-  await Graph.writeSaleToReportingLists(lead, agentName, program).catch(function(err) {
-    console.warn("Reporting write failed:", err);
-  });
-}
+    if (newStatus === Config.soldStatus) {
+      UI.showConfetti();
+      UI.showSaleBanner(lead.name, (user && user.name) || "");
+    } else if (newStatus !== "TDM") {
+      UI.showToast("Saved!", "success");
+    }
 
     _stagedStatus = null;
     _leadSaved    = true;
