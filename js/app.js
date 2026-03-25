@@ -1487,8 +1487,28 @@ function renderLeadModal(lead) {
       </div>
 
       <div class="form-group form-group-full">
-        <label>Notes</label>
-        <textarea id="f-notes" class="form-input form-textarea">${escHtml((lead&&lead.notes)||"")}</textarea>
+        <label>Notes History</label>
+        ${lead && lead.notes ? `
+        <div style="background:#F4F7FD;border:1px solid #D0DCF0;border-radius:6px;padding:12px 14px;margin-bottom:10px;max-height:180px;overflow-y:auto">
+          ${(lead.notes||"").split("\n").filter(function(l){return l.trim();}).map(function(line) {
+            const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
+            if (match) {
+              const date  = match[1];
+              const agent = match[2] ? match[2].replace(/^\s*-\s*/,"") : "";
+              const text  = match[3];
+              return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
+                  <span style="font-family:var(--font-mono);font-size:10px;color:#2563B0;font-weight:700;background:#E8F0FF;padding:1px 6px;border-radius:3px">${date}</span>
+                  ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#6B85B0">${escHtml(agent)}</span>` : ""}
+                </div>
+                <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
+              </div>`;
+            }
+            return `<div style="font-size:13px;color:#4A6080;margin-bottom:4px">${escHtml(line)}</div>`;
+          }).join("")}
+        </div>` : `<div style="font-size:12px;color:#8EA5C8;margin-bottom:10px;font-family:var(--font-mono)">No notes yet.</div>`}
+        <label style="margin-top:4px">Add Note</label>
+        <textarea id="f-notes" class="form-input form-textarea" placeholder="Add a note — will be date-stamped automatically on save..."></textarea>
       </div>
     </div>
     <div class="modal-footer">
@@ -1570,12 +1590,16 @@ function collectLeadForm() {
   add("Zip",                              "f-zip",          true);
   add("AutoPay",                          "f-autopay");
 
-  // Date-stamp the note before saving
+  // Date-stamp the note with admin name before saving — append to existing
   const notesEl = document.getElementById("f-notes");
   if (notesEl && notesEl.value.trim()) {
-    const dateStamp = new Date().toLocaleDateString("en-US", { month:"2-digit", day:"2-digit", year:"2-digit" });
-    const existing  = fields["Notes"] || "";
-    fields["Notes"] = "[" + dateStamp + "] " + notesEl.value.trim() + (existing ? "\n" + existing : "");
+    const today     = new Date();
+    const dateStamp = (today.getMonth()+1).toString().padStart(2,"0") + "/" + today.getDate().toString().padStart(2,"0") + "/" + String(today.getFullYear()).slice(-2);
+    const adminName = (State.currentUser && State.currentUser.name) ? " - " + State.currentUser.name : "";
+    const lead      = State.editingLeadId ? State.leads.find(function(l){return l.id===State.editingLeadId;}) : null;
+    const existing  = (lead && lead.notes) || "";
+    const stamped   = "[" + dateStamp + adminName + "] " + notesEl.value.trim();
+    fields["Notes"] = existing ? stamped + "\n" + existing : stamped;
   }
 
   if (!fields.Status) fields.Status = "New";
