@@ -704,7 +704,7 @@ function renderLeadFeedCard(myLeads, contactsToday, forceFirst) {
                 <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
               </div>`;
             }
-            return `<div style="font-size:13px;color:#4A6080;margin-bottom:4px">${escHtml(line)}</div>`;
+            return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8"><div style="margin-bottom:3px"><span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:#F4F7FD;padding:1px 6px;border-radius:3px">Legacy note — author unknown</span></div><span style="font-size:13px;color:#4A6080">${escHtml(line)}</span></div>`;
           }).join("")}
         </div>` : ""}
         <div style="font-family:var(--font-mono);font-size:10px;color:#6B85B0;margin-top:8px;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">
@@ -1504,7 +1504,7 @@ function renderLeadModal(lead) {
                 <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
               </div>`;
             }
-            return `<div style="font-size:13px;color:#4A6080;margin-bottom:4px">${escHtml(line)}</div>`;
+            return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8"><div style="margin-bottom:3px"><span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:#F4F7FD;padding:1px 6px;border-radius:3px">Legacy note — author unknown</span></div><span style="font-size:13px;color:#4A6080">${escHtml(line)}</span></div>`;
           }).join("")}
         </div>` : `<div style="font-size:12px;color:#8EA5C8;margin-bottom:10px;font-family:var(--font-mono)">No notes yet.</div>`}
         <label style="margin-top:4px">Add Note</label>
