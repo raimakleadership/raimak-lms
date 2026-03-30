@@ -227,10 +227,10 @@ function renderDashboard() {
         <span class="kpi-value">${todaySales.length}</span>
         <span class="kpi-sub">${total ? Math.round((sold/total)*100) : 0}% all-time close rate</span>
       </div>
-      <div class="kpi-card ${needRecycle > 0 ? "kpi-warn" : "kpi-neutral"}">
+      <div class="kpi-card ${needRecycle > 0 ? "kpi-warn" : "kpi-neutral"}" ${isAdmin() && needRecycle > 0 ? 'style="cursor:pointer" onclick="document.querySelector(\'[style*=recycle]\')?.scrollIntoView({behavior:\'smooth\'})"' : ""}>
         <span class="kpi-label">Needs Recycle</span>
         <span class="kpi-value">${needRecycle}</span>
-        <span class="kpi-sub">&gt;${Config.rules.recycleAfterDays} days inactive</span>
+        <span class="kpi-sub">${needRecycle > 0 ? "↓ See recycle queue below" : "All leads current"}</span>
       </div>
       <div class="kpi-card ${coolOff > 0 ? "kpi-info" : "kpi-neutral"}">
         <span class="kpi-label">In Cool-Off</span>
@@ -294,6 +294,43 @@ function renderDashboard() {
       </div>
       ${renderLeadsTable(recentLeads, true)}
     </div>
+
+    ${isAdmin() && needRecycle > 0 ? `
+    <div class="card" style="border-color:#FFB300;box-shadow:0 0 20px rgba(255,179,0,0.1)">
+      <div class="card-header" style="background:#FFF8E1">
+        <h2 class="card-title" style="color:#8B6914">
+          ⚠️ Recycle Queue — ${needRecycle} lead${needRecycle!==1?"s":""} ready
+        </h2>
+        <span class="card-meta" style="color:#8B6914">3rd Contact · 48hrs+ since last contact</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Name</th><th>Address</th><th>Previously Assigned To</th><th>Last Contacted</th><th>Action</th>
+          </tr></thead>
+          <tbody>
+            ${leads.filter(function(l){return l.flags&&l.flags.includes("needs_recycle");}).map(function(l){
+              return `<tr>
+                <td><span class="lead-name">${escHtml(l.name)}</span></td>
+                <td class="td-mono" style="font-size:11px">${escHtml(l.address||"—")}${l.city?", "+escHtml(l.city):""}</td>
+                <td>
+                  <div style="display:flex;flex-direction:column;gap:2px">
+                    ${l.assignedTo ? `<span style="font-size:13px;font-weight:600;color:#1A2640">${escHtml(l.assignedTo)}</span>` : "—"}
+                    ${l.previousAgents ? `<span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8">Previously: ${escHtml(l.previousAgents)}</span>` : ""}
+                  </div>
+                </td>
+                <td class="td-mono">${formatDate(l.lastContacted)||"—"}</td>
+                <td>
+                  <button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="recycleLeadAction('${l.id}','${escHtml(l.assignedTo||"")}','${escHtml(l.name)}')">
+                    Recycle
+                  </button>
+                </td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ""}
   `;
   updateBadges();
   startSalesFeedPolling();
@@ -301,6 +338,26 @@ function renderDashboard() {
 
 // Track last known sale count to detect new sales
 let _lastSaleCount = 0;
+
+async function recycleLeadAction(leadId, currentAgent, leadName) {
+  if (!confirm("Recycle \"" + leadName + "\"?\n\nThis will:\n• Reset status to New\n• Unassign from " + (currentAgent||"current agent") + "\n• Record previous assignment history\n\nThe lead can then be reassigned to a different agent.")) return;
+  setLoading(true);
+  try {
+    await Graph.recycleLead(leadId, currentAgent);
+    await Graph.logActivity({
+      LeadID:     leadId,
+      Title:      leadName,
+      ActionType: "Recycled",
+      AgentEmail: (State.currentUser && State.currentUser.email) || "",
+      Notes:      "Recycled by admin — previous agent: " + (currentAgent || "unknown"),
+    });
+    UI.showToast(leadName + " recycled and ready to reassign!", "success");
+    await loadAllData();
+    renderDashboard();
+  } catch (err) {
+    UI.showToast("Failed: " + err.message, "error");
+  } finally { setLoading(false); }
+}
 
 function startSalesFeedPolling() {
   if (State.salesFeedTimer) clearInterval(State.salesFeedTimer);
