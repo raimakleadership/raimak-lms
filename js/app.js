@@ -1353,6 +1353,7 @@ function renderLeadsTable(leads, compact, agentView) {
           <th>Name</th>
           <th>Type</th>
           <th>Status</th>
+          <th>Phone</th>
           <th>Assigned To</th>
           <th>Address</th>
           <th>Last Contacted</th>
@@ -1363,13 +1364,17 @@ function renderLeadsTable(leads, compact, agentView) {
             const statusCls = "status-" + lead.status.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"");
             const typeCls   = lead.leadType ? "lead-type-" + lead.leadType.toLowerCase() : "";
             const isChecked = State.selectedLeads.has(lead.id);
+            const rowClick  = agentView
+              ? "loadLeadInFeed('" + lead.id + "')"
+              : (isAdmin() ? "openEditLeadModal('" + lead.id + "')" : "");
             return `
               <tr class="lead-row ${lead.flags && lead.flags.includes("needs_recycle") ? "row-warn" : ""} ${isChecked ? "row-selected" : ""}"
-                  onclick="${isAdmin() ? "openEditLeadModal('" + lead.id + "')" : ""}">
+                  onclick="${rowClick}" style="${agentView ? "cursor:pointer" : ""}">
                 ${compact ? "" : `<td onclick="event.stopPropagation()" style="width:36px"><input type="checkbox" class="lead-checkbox lead-cb" data-id="${lead.id}" ${isChecked?"checked":""} onchange="toggleLeadSelect('${lead.id}',this.checked)"></td>`}
                 <td><span class="lead-name">${escHtml(lead.name)}</span></td>
                 <td>${lead.leadType ? `<span class="lead-type-badge ${typeCls}">${escHtml(lead.leadType)}</span>` : "—"}</td>
                 <td><span class="status-badge ${statusCls}">${lead.status}</span></td>
+                <td class="td-mono">${escHtml(lead.phone || "—")}</td>
                 <td>${escHtml(lead.assignedTo || "—")}</td>
                 <td class="td-mono" style="font-size:11px">${lead.address ? escHtml(lead.address) + (lead.city ? ", " + escHtml(lead.city) : "") + (lead.state ? " " + escHtml(lead.state) : "") : "—"}</td>
                 <td class="td-mono">${formatDate(lead.lastContacted) || "—"}</td>
@@ -1391,6 +1396,19 @@ function renderLeadsTable(leads, compact, agentView) {
         </tbody>
       </table>
     </div>`;
+}
+
+// Load a specific lead into the feed card when clicked from search results
+function loadLeadInFeed(leadId) {
+  const lead = (window._myLeads || []).find(function(l) { return l.id === leadId; });
+  if (!lead) return;
+  const feedWrap = document.getElementById("lead-feed-wrap");
+  if (feedWrap) {
+    _leadSaved = false;
+    feedWrap.innerHTML = renderLeadFeedCard([lead], 0, true);
+    feedWrap.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
 }
 
 // ============================================================
