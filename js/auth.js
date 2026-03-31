@@ -16,8 +16,8 @@ const Auth = (() => {
         redirectUri: Config.azure.redirectUri,
       },
       cache: {
-        cacheLocation:          "sessionStorage",
-        storeAuthStateInCookie: false,
+        cacheLocation:          "localStorage",
+        storeAuthStateInCookie: true,
       },
     });
     return msalInstance.handleRedirectPromise();
