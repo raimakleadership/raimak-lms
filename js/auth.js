@@ -1,14 +1,12 @@
 // ============================================================
 //  Raimak LMS — Authentication (MSAL)
 // ============================================================
-
 const Auth = (() => {
-
   let msalInstance = null;
   let currentAccount = null;
 
   // ── Init MSAL ──────────────────────────────────────────────
-  function init() {
+  async function init() {
     msalInstance = new msal.PublicClientApplication({
       auth: {
         clientId:    Config.azure.clientId,
@@ -20,7 +18,22 @@ const Auth = (() => {
         storeAuthStateInCookie: true,
       },
     });
-    return msalInstance.handleRedirectPromise();
+
+    const result = await msalInstance.handleRedirectPromise();
+
+    // Set active account from redirect result for new users
+    if (result && result.account) {
+      currentAccount = result.account;
+      msalInstance.setActiveAccount(result.account);
+    } else {
+      const accounts = msalInstance.getAllAccounts();
+      if (accounts.length) {
+        currentAccount = accounts[0];
+        msalInstance.setActiveAccount(accounts[0]);
+      }
+    }
+
+    return result;
   }
 
   // ── Sign In ────────────────────────────────────────────────
@@ -39,40 +52,43 @@ const Auth = (() => {
   }
 
   // ── Get Access Token ───────────────────────────────────────
- async function getToken() {
-  const accounts = msalInstance.getAllAccounts();
-  if (!accounts.length) return null;
+  async function getToken() {
+    const account = msalInstance.getActiveAccount()
+                 || msalInstance.getAllAccounts()[0];
+    if (!account) return null;
 
-  currentAccount = accounts[0];
+    currentAccount = account;
 
-  try {
-    const result = await msalInstance.acquireTokenSilent({
-      scopes:  Config.scopes,
-      account: currentAccount,
-    });
-    return result.accessToken;
-  } catch (err) {
-    if (err instanceof msal.InteractionRequiredAuthError) {
-      // Don't throw after redirect — just redirect and let the page reload handle it
-      await msalInstance.acquireTokenRedirect({ scopes: Config.scopes });
-      return null; // ← this line replaces "throw err"
+    try {
+      const result = await msalInstance.acquireTokenSilent({
+        scopes:  Config.scopes,
+        account: currentAccount,
+      });
+      return result.accessToken;
+    } catch (err) {
+      if (err instanceof msal.InteractionRequiredAuthError) {
+        await msalInstance.acquireTokenRedirect({ scopes: Config.scopes });
+        return null;
+      }
+      throw err;
     }
-    throw err;
   }
-}
+
   // ── Current User ───────────────────────────────────────────
   function getUser() {
-    const accounts = msalInstance?.getAllAccounts();
-    if (!accounts?.length) return null;
-    currentAccount = accounts[0];
+    const account = msalInstance?.getActiveAccount()
+                 || msalInstance?.getAllAccounts()?.[0];
+    if (!account) return null;
+    currentAccount = account;
     return {
-      name:  currentAccount.name || currentAccount.username,
-      email: currentAccount.username,
+      name:  account.name || account.username,
+      email: account.username,
     };
   }
 
   function isSignedIn() {
-    return !!(msalInstance?.getAllAccounts()?.length);
+    return !!(msalInstance?.getActiveAccount()
+           || msalInstance?.getAllAccounts()?.length);
   }
 
   return { init, signIn, signOut, getToken, getUser, isSignedIn };
