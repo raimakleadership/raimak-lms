@@ -1091,25 +1091,6 @@ const { leads, contractors } = State;
   } finally { setLoading(false); }
 }
 
-  try {
-    const slots = [];
-    contractors.forEach(function(c) {
-      const current   = leads.filter(function(l) { return l.assignedTo === c.name && !Config.terminalStatuses.includes(l.status); }).length;
-      const available = Config.rules.maxLeadsPerAgent - current;
-      for (var i = 0; i < available; i++) slots.push(c.name);
-    });
-    let assigned = 0;
-    for (let i = 0; i < Math.min(unassigned.length, slots.length); i++) {
-      await Graph.assignAgent(unassigned[i].id, slots[i]);
-      assigned++;
-    }
-    UI.showToast("Assigned " + assigned + " leads!", "success");
-    await loadAllData();
-    renderAssignLeads();
-  } catch (err) {
-    UI.showToast("Auto-assign failed: " + err.message, "error");
-  } finally { setLoading(false); }
-}
 
 // ============================================================
 //  LEADS VIEW
