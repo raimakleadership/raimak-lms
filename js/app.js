@@ -589,7 +589,7 @@ function renderMyLeads() {
   // Clamp index
   if (_currentFeedIndex >= myLeads.length) _currentFeedIndex = 0;
 
-  const contactsToday = Graph.agentContactsToday((user && user.name) || "", State.activityLog);
+  const contactsToday = Graph.agentContactsToday((user && user.email) || "", State.activityLog);
   const atLimit       = contactsToday >= Config.rules.maxContactsPerDay;
 
   document.getElementById("main-content").innerHTML = `
