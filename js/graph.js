@@ -235,15 +235,27 @@ const Graph = (() => {
     });
   }
 
-  // Get daily activity stats per agent for the report
+  // Get daily activity stats per agent for the report.
+  // Maps agent emails back to display names via the contractors list.
   async function getDailyStats() {
-    const log   = await getActivityLog(500);
-    const today = new Date().toDateString();
-    const todayEntries = log.filter(function(e) { return e.timestamp && new Date(e.timestamp).toDateString() === today; });
+    const log        = await getActivityLog(500);
+    const today      = new Date().toDateString();
+    const todayEntries = log.filter(function(e) {
+      return e.timestamp && new Date(e.timestamp).toDateString() === today;
+    });
+
+    // Build email → display name map from contractors
+    const emailToName = {};
+    (State.contractors || []).forEach(function(c) {
+      if (c.email) emailToName[c.email.toLowerCase().trim()] = c.name;
+    });
 
     const stats = {};
     for (const entry of todayEntries) {
-      const agent     = entry.agent || "Unknown";
+      // Resolve display name from email
+      const agentEmail = (entry.agent || "").toLowerCase().trim();
+      const agent      = emailToName[agentEmail] || entry.agent || "Unknown";
+
       const isContact = entry.action && (
         entry.action.indexOf("Status:") === 0 ||
         entry.action === "1st Contact" ||
@@ -255,6 +267,7 @@ const Graph = (() => {
       if (entry.action === "Status: " + Config.soldStatus) stats[agent].sold++;
       stats[agent].actions.push(entry);
     }
+
     // Convert Set size to contacts count
     Object.values(stats).forEach(function(s) {
       s.contacts = s.uniqueLeads.size;
@@ -338,17 +351,27 @@ const Graph = (() => {
   function agentContactsToday(agentName, activityLog) {
     const today      = new Date().toDateString();
     const agentLower = (agentName || "").toLowerCase().trim();
+
+    // Build name → email map from contractors for reverse lookup
+    const nameToEmail = {};
+    (State.contractors || []).forEach(function(c) {
+      if (c.name) nameToEmail[c.name.toLowerCase().trim()] = (c.email || "").toLowerCase().trim();
+    });
+    const agentEmail = nameToEmail[agentLower] || agentLower;
+
     const uniqueLeads = new Set();
     activityLog.forEach(function(e) {
-      const entryAgent  = (e.agent || "").toLowerCase().trim();
-      const isContact   = e.action && (
+      const entryAgent = (e.agent || "").toLowerCase().trim();
+      const isContact  = e.action && (
         e.action.indexOf("Status:") === 0 ||
         e.action === "1st Contact" ||
         e.action === "2nd Contact" ||
         e.action === "3rd Contact"
       );
+      // Match by either display name or email
+      const agentMatch = entryAgent === agentLower || entryAgent === agentEmail;
       if (isContact &&
-          entryAgent === agentLower &&
+          agentMatch &&
           e.timestamp &&
           new Date(e.timestamp).toDateString() === today &&
           e.leadId) {
