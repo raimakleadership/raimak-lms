@@ -194,7 +194,7 @@ const Graph = (() => {
       const f = item.fields || {};
       return {
         id:        item.id,
-        leadId:    f.LeadID    || f.LeadId    || "",
+        leadId:    String(f.LeadID    || f.LeadId    || ""),
         leadName:  f.Title     || f.LeadName  || "",
         action:    f.ActionType || f.Action   || f.Activity || "",
         agent:     f.AgentEmail || f.Agent    || "",
@@ -228,7 +228,7 @@ const Graph = (() => {
       if (e.action === "Status: " + Config.soldStatus &&
           e.timestamp &&
           new Date(e.timestamp).toDateString() === today) {
-        soldTodayIds.add(e.leadId);
+        soldTodayIds.add(String(e.leadId));
       }
     });
 
