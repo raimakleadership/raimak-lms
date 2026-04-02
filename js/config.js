@@ -58,7 +58,7 @@ const Config = {
   soldStatus: "Sold",
 
   // Lead types
-  leadTypes: ["MLR", "OFS", "Forced"],
+  leadTypes: ["OFS", "MLR", "Forced"],
 
   // Current products options — alphabetical
   currentProducts: [
