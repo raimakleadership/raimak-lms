@@ -186,7 +186,7 @@ const Graph = (() => {
   // ============================================================
 
   async function getActivityLog(limit) {
-    limit = limit || 200;
+    limit = limit || 2000;
     await resolveSiteIds();
     const url = base + "/sites/" + siteIds.leadship + "/lists/" + lists.activityLog + "/items?expand=fields&$orderby=createdDateTime desc&$top=" + limit;
     const raw = await getAllItems(url);
@@ -217,7 +217,7 @@ const Graph = (() => {
   async function getTodaySales() {
   await resolveSiteIds();
   const [log, rawLeads] = await Promise.all([
-    getActivityLog(500),
+    getActivityLog(2000),
     getLeads(),
   ]);
   const today = new Date().toDateString();
@@ -241,7 +241,7 @@ const Graph = (() => {
   // Get daily activity stats per agent for the report.
   // Maps agent emails back to display names via the contractors list.
   async function getDailyStats() {
-    const log        = await getActivityLog(500);
+    const log        = await getActivityLog(2000);
     const today      = new Date().toDateString();
     const todayEntries = log.filter(function(e) {
       return e.timestamp && new Date(e.timestamp).toDateString() === today;
