@@ -106,11 +106,10 @@ window.addEventListener("DOMContentLoaded", async function () {
 
     State.currentUser = Auth.getUser();
     State.role = detectRole(State.currentUser);
-
-    // We will fix these next!
     showAppShell();
     await loadAllData();
     renderDashboard();
+    Ticker.update();
   } catch (err) {
     console.error("Boot error:", err);
     showLoginScreen();
@@ -351,20 +350,57 @@ function renderDashboard() {
     : `<p class="empty-state">No sales yet today.</p>`;
 
   // 5. Inject the Heavy Tables
-  clone.getElementById("dash-recent-table").innerHTML = renderLeadsTable(
-    recentLeads,
-    true,
-  );
+  clone
+    .getElementById("dash-recent-table")
+    .replaceChildren(renderLeadsTable(recentLeads, true));
 
   if (isAdmin() && needRecycle > 0) {
     clone.getElementById("dash-recycle-title").textContent =
       `⚠️ Recycle Queue — ${needRecycle} lead${needRecycle !== 1 ? "s" : ""} ready`;
-    // Note: I left the actual recycle table build out for brevity, but you'd inject his table HTML here just like the top5 list!
+
+    // 1. Filter out only the leads that need recycling
+    const recycleQueue = leads.filter(
+      (l) => l.flags && l.flags.includes("needs_recycle"),
+    );
+
+    // 2. Build the table HTML
+    clone.getElementById("dash-recycle-table").innerHTML = `
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th><th>Address</th><th>Previously Assigned To</th><th>Last Contacted</th><th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${recycleQueue
+            .map(
+              (l) => `
+            <tr>
+              <td><span class="lead-name">${escHtml(l.name)}</span></td>
+              <td class="td-mono" style="font-size:11px">${escHtml(l.address || "—")}${l.city ? ", " + escHtml(l.city) : ""}</td>
+              <td>
+                <div style="display:flex;flex-direction:column;gap:2px">
+                  ${l.assignedTo ? `<span style="font-size:13px;font-weight:600;color:#1A2640">${escHtml(l.assignedTo)}</span>` : "—"}
+                  ${l.previousAgents ? `<span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8">Previously: ${escHtml(l.previousAgents)}</span>` : ""}
+                </div>
+              </td>
+              <td class="td-mono">${formatDate(l.lastContacted) || "—"}</td>
+              <td>
+                <button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="recycleLeadAction('${l.id}','${escHtml(l.assignedTo || "")}','${escHtml(l.name)}')">
+                  Recycle
+                </button>
+              </td>
+            </tr>
+          `,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `;
   } else if (isAdmin()) {
     // Hide the whole section if no leads to recycle
     clone.getElementById("dash-recycle-section").style.display = "none";
   }
-
   // 6. Mount it to the screen!
   mainContent.appendChild(clone);
 
@@ -476,11 +512,7 @@ function startSalesFeedPolling() {
         const latest = newOnes[newOnes.length - 1];
         const soldBy = latest && latest.soldBy;
         const assignee = latest && latest.assignedTo;
-        UI.showSaleBanner(
-          (latest && latest.name) || "a customer",
-          soldBy || assignee || "An agent",
-          soldBy && assignee && soldBy !== assignee ? assignee : null,
-        );
+        Ticker.update();
         UI.showConfetti();
         newOnes.forEach(function (l) {
           knownSaleIds.add(l.id);
@@ -547,17 +579,12 @@ function renderDripFeed() {
 
   clone.getElementById("drip-subtitle").textContent =
     `// ASSIGN ONE LEAD AT A TIME · ${remaining} unassigned`;
-
-  // 3. Toggle States
   if (!lead) {
-    // Show Empty State
     clone.getElementById("drip-empty-state").style.display = "block";
     clone.getElementById("drip-header-skip").style.display = "none";
   } else {
-    // Show Active State
     clone.getElementById("drip-active-state").style.display = "block";
 
-    // Build Badges
     const typeBadge = clone.getElementById("drip-lead-type");
     if (lead.leadType) {
       typeBadge.textContent = lead.leadType;
@@ -613,10 +640,9 @@ function renderDripFeed() {
     // Build Remaining Table
     clone.getElementById("drip-remaining-title").textContent =
       `Remaining Unassigned (${remaining})`;
-    clone.getElementById("drip-remaining-table").innerHTML = renderLeadsTable(
-      unassigned.slice(0, 10),
-      true,
-    );
+    clone
+      .getElementById("drip-remaining-table")
+      .replaceChildren(renderLeadsTable(unassigned.slice(0, 10), true));
   }
 
   // 4. Mount
@@ -866,9 +892,11 @@ function searchMyLeads(q) {
     );
   });
 
-  wrap.innerHTML = filtered.length
-    ? renderLeadsTable(filtered, false, true)
-    : `<div class="empty-state">No leads found for "${escHtml(q)}"</div>`;
+  if (filtered.length) {
+    wrap.replaceChildren(renderLeadsTable(filtered, false, true));
+  } else {
+    wrap.innerHTML = `<div class="empty-state">No leads found for "${escHtml(q)}"</div>`;
+  }
 }
 
 let _stagedStatus = null;
@@ -1201,22 +1229,8 @@ async function agentSaveAll(leadId) {
             "]"
           : ""),
     });
-
-    if (newStatus === Config.soldStatus) {
-      UI.showConfetti();
-      const savingAgentName = (user && user.name) || "";
-      // If saving for someone else, show "Noah just made a sale for Jon"
-      // If saving own lead, show "Jon just closed a sale!"
-      if (soldByName && savingAgentName && soldByName !== savingAgentName) {
-        UI.showSaleBanner(
-          lead.name,
-          soldByName,
-          lead.assignedTo !== soldByName ? lead.assignedTo : null,
-        );
-      } else {
-        UI.showSaleBanner(lead.name, soldByName || savingAgentName, null);
-      }
-    } else if (newStatus !== "TDM") {
+    Ticker.update();
+    if (newStatus !== "TDM") {
       UI.showToast("Saved!", "success");
     }
 
@@ -1591,9 +1605,9 @@ function renderLeads() {
   });
 
   // 6. Draw the Table
-  // (We use innerHTML here because renderLeadsTable still returns an HTML string for the big table)
-  clone.getElementById("leads-table-wrap").innerHTML =
-    renderLeadsTable(getFilteredLeads());
+  clone
+    .getElementById("leads-table-wrap")
+    .replaceChildren(renderLeadsTable(getFilteredLeads()));
 
   // 7. Mount!
   mainContent.appendChild(clone);
@@ -1857,77 +1871,106 @@ function applyFilters() {
   if (wrap) wrap.innerHTML = renderLeadsTable(getFilteredLeads());
 }
 
-function renderLeadsTable(leads, compact, agentView) {
-  if (!leads.length)
-    return `<div class="empty-state"><p>No leads found.</p></div>`;
-  return `
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead><tr>
-          ${compact ? "" : `<th style="width:36px"><input type="checkbox" id="select-all-cb" class="lead-cb" onchange="toggleSelectAll(this.checked)" title="Select all"></th>`}
-          <th>Name</th><th>Type</th><th>Status</th><th>Phone</th><th>Assigned To</th><th>Address</th><th>Last Contacted</th>
-          ${compact ? "" : "<th>CBR</th><th>BTN</th><th>Flags</th><th></th>"}
-        </tr></thead>
-        <tbody>
-          ${leads
-            .map(function (lead) {
-              const statusCls =
-                "status-" +
-                lead.status
-                  .toLowerCase()
-                  .replace(/\s+/g, "-")
-                  .replace(/[^a-z0-9-]/g, "");
-              const typeCls = lead.leadType
-                ? "lead-type-" + lead.leadType.toLowerCase()
-                : "";
-              const isChecked = State.selectedLeads.has(lead.id);
-              const rowClick = agentView
-                ? "loadLeadInFeed('" + lead.id + "')"
-                : isAdmin()
-                  ? "openEditLeadModal('" + lead.id + "')"
-                  : "";
-              return `
-              <tr class="lead-row ${lead.flags && lead.flags.includes("needs_recycle") ? "row-warn" : ""} ${isChecked ? "row-selected" : ""}"
-                  onclick="${rowClick}" style="${agentView ? "cursor:pointer" : ""}">
-                ${compact ? "" : `<td onclick="event.stopPropagation()" style="width:36px"><input type="checkbox" class="lead-checkbox lead-cb" data-id="${lead.id}" ${isChecked ? "checked" : ""} onchange="toggleLeadSelect('${lead.id}',this.checked)"></td>`}
-                <td><span class="lead-name">${escHtml(lead.name)}</span></td>
-                <td>${lead.leadType ? `<span class="lead-type-badge ${typeCls}">${escHtml(lead.leadType)}</span>` : "—"}</td>
-                <td><span class="status-badge ${statusCls}">${lead.status}</span></td>
-                <td class="td-mono">${escHtml(lead.phone || "—")}</td>
-                <td>${escHtml(lead.assignedTo || "—")}</td>
-                <td class="td-mono" style="font-size:11px">${lead.address ? escHtml(lead.address) + (lead.city ? ", " + escHtml(lead.city) : "") + (lead.state ? " " + escHtml(lead.state) : "") : "—"}</td>
-                <td class="td-mono">${formatDate(lead.lastContacted) || "—"}</td>
-                ${
-                  compact
-                    ? ""
-                    : `
-                <td class="td-mono">${escHtml(lead.cbr || "—")}</td>
-                <td class="td-mono">${escHtml(lead.btn || "—")}</td>
-                <td class="td-flags">${(lead.flags || [])
-                  .map(function (f) {
-                    return `<span class="flag flag-${f}">${flagLabel(f)}</span>`;
-                  })
-                  .join("")}</td>
-                <td class="td-actions">
-                  ${
-                    isAdmin()
-                      ? `
-                    <button class="btn-icon" onclick="event.stopPropagation();openEditLeadModal('${lead.id}')" title="Edit">
-                      <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                    </button>
-                    <button class="btn-icon btn-danger" onclick="event.stopPropagation();deleteLead('${lead.id}')" title="Delete">
-                      <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-                    </button>`
-                      : ""
-                  }
-                </td>`
-                }
-              </tr>`;
-            })
-            .join("")}
-        </tbody>
-      </table>
-    </div>`;
+function renderLeadsTable(leads, compact = false, agentView = false) {
+  // 1. Handle Empty State
+  if (!leads.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.innerHTML = "<p>No leads found.</p>";
+    return empty;
+  }
+
+  // 2. Setup Template
+  const template = document.getElementById("tmpl-leads-table");
+  const clone = template.content.cloneNode(true);
+
+  // We wrap it so we can return the outer element properly
+  const wrapper = document.createElement("div");
+  wrapper.appendChild(clone);
+
+  const thead = wrapper.querySelector("#table-header-row");
+  const tbody = wrapper.querySelector("#table-body");
+
+  // 3. Build Headers dynamically based on 'compact' mode
+  let headers = "<tr>";
+  if (!compact)
+    headers += `<th style="width:36px"><input type="checkbox" id="select-all-cb" class="lead-cb" onchange="toggleSelectAll(this.checked)" title="Select all"></th>`;
+  headers += `<th>Name</th><th>Type</th><th>Status</th><th>Phone</th><th>Assigned To</th><th>Address</th><th>Last Contacted</th>`;
+  if (!compact) headers += `<th>CBR</th><th>BTN</th><th>Flags</th><th></th>`;
+  headers += "</tr>";
+  thead.innerHTML = headers;
+
+  // 4. Build Rows instantly using our helper
+  const admin = isAdmin();
+  tbody.innerHTML = leads
+    .map((lead) => buildLeadRowHtml(lead, compact, agentView, admin))
+    .join("");
+
+  return wrapper.firstElementChild; // Return the living DOM element!
+}
+
+function buildLeadRowHtml(lead, compact, agentView, admin) {
+  const statusCls =
+    "status-" +
+    lead.status
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+  const typeCls = lead.leadType
+    ? "lead-type-" + lead.leadType.toLowerCase()
+    : "";
+  const isChecked = State.selectedLeads.has(lead.id);
+
+  const rowClick = agentView
+    ? `loadLeadInFeed('${lead.id}')`
+    : admin
+      ? `openEditLeadModal('${lead.id}')`
+      : "";
+  const rowStyle = agentView ? "cursor:pointer" : "";
+  const warnCls =
+    lead.flags && lead.flags.includes("needs_recycle") ? "row-warn" : "";
+  const selCls = isChecked ? "row-selected" : "";
+
+  let html = `<tr class="lead-row ${warnCls} ${selCls}" onclick="${rowClick}" style="${rowStyle}">`;
+
+  if (!compact) {
+    html += `<td onclick="event.stopPropagation()" style="width:36px">
+              <input type="checkbox" class="lead-checkbox lead-cb" data-id="${lead.id}" ${isChecked ? "checked" : ""} onchange="toggleLeadSelect('${lead.id}',this.checked)">
+             </td>`;
+  }
+
+  html += `<td><span class="lead-name">${escHtml(lead.name)}</span></td>`;
+  html += `<td>${lead.leadType ? `<span class="lead-type-badge ${typeCls}">${escHtml(lead.leadType)}</span>` : "—"}</td>`;
+  html += `<td><span class="status-badge ${statusCls}">${lead.status}</span></td>`;
+  html += `<td class="td-mono">${escHtml(lead.phone || "—")}</td>`;
+  html += `<td>${escHtml(lead.assignedTo || "—")}</td>`;
+  html += `<td class="td-mono" style="font-size:11px">${lead.address ? escHtml(lead.address) : "—"}${lead.city ? ", " + escHtml(lead.city) : ""}${lead.state ? " " + escHtml(lead.state) : ""}</td>`;
+  html += `<td class="td-mono">${formatDate(lead.lastContacted) || "—"}</td>`;
+
+  if (!compact) {
+    html += `<td class="td-mono">${escHtml(lead.cbr || "—")}</td>`;
+    html += `<td class="td-mono">${escHtml(lead.btn || "—")}</td>`;
+
+    const flagsHtml = (lead.flags || [])
+      .map((f) => `<span class="flag flag-${f}">${flagLabel(f)}</span>`)
+      .join("");
+    html += `<td class="td-flags">${flagsHtml}</td>`;
+
+    html += `<td class="td-actions">`;
+    if (admin) {
+      html += `
+        <button class="btn-icon" onclick="event.stopPropagation();openEditLeadModal('${lead.id}')" title="Edit">
+          <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button class="btn-icon btn-danger" onclick="event.stopPropagation();deleteLead('${lead.id}')" title="Delete">
+          <svg width="13" height="13" fill="none" viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>`;
+    }
+    html += `</td>`;
+  }
+
+  html += `</tr>`;
+  return html;
 }
 
 function loadLeadInFeed(leadId) {
@@ -2157,148 +2200,117 @@ function openEditLeadModal(id) {
 
 function renderLeadModal(lead) {
   const isEdit = !!lead;
-  const contractors = State.contractors.map(function (c) {
-    return c.name;
+  const contractors = State.contractors.map((c) => c.name);
+  const modalContainer = document.getElementById("modal");
+  modalContainer.innerHTML = ""; // Clear existing
+  const template = document.getElementById("tmpl-lead-modal");
+  const clone = template.content.cloneNode(true);
+
+  // 2. Header & Button Logic
+  clone.getElementById("modal-title").textContent = isEdit
+    ? "Edit Lead"
+    : "New Lead";
+  const submitBtn = clone.getElementById("modal-submit-btn");
+  submitBtn.textContent = isEdit ? "Save Changes" : "Add Lead";
+  submitBtn.onclick = () => (isEdit ? submitEditLead() : submitAddLead());
+
+  // 3. Populate Standard Text Inputs (Safely falls back to empty string if creating new lead)
+  const safeVal = (val) => val || "";
+
+  clone.getElementById("f-firstname").value = safeVal(lead?.firstName);
+  clone.getElementById("f-lastname").value = safeVal(lead?.lastName);
+  clone.getElementById("f-email").value = safeVal(lead?.email);
+  clone.getElementById("f-phone").value = safeVal(lead?.phone);
+  clone.getElementById("f-address").value = safeVal(lead?.address);
+  clone.getElementById("f-city").value = safeVal(lead?.city);
+  clone.getElementById("f-state").value = safeVal(lead?.state);
+  clone.getElementById("f-zip").value = safeVal(lead?.zip);
+  clone.getElementById("f-mrc").value = safeVal(lead?.currentMRC);
+
+  if (lead && lead.lastContacted) {
+    clone.getElementById("f-lastcontacted").value =
+      lead.lastContacted.split("T")[0];
+  }
+
+  // 4. Populate Dropdowns dynamically
+  const leadTypeSelect = clone.getElementById("f-leadtype");
+  Config.leadTypes.forEach((t) => {
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    if (lead && lead.leadType === t) opt.selected = true;
+    leadTypeSelect.appendChild(opt);
   });
 
-  document.getElementById("modal").innerHTML = `
-    <div class="modal-header">
-      <h2>${isEdit ? "Edit Lead" : "New Lead"}</h2>
-      <button class="btn-icon" onclick="closeModal()">
-        <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
-    </div>
-    <div class="modal-form">
-      <div class="form-row">
-        <div class="form-group"><label>First Name *</label><input type="text" id="f-firstname" class="form-input" value="${escHtml((lead && lead.firstName) || "")}"></div>
-        <div class="form-group"><label>Last Name *</label><input type="text" id="f-lastname" class="form-input" value="${escHtml((lead && lead.lastName) || "")}"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Email</label><input type="email" id="f-email" class="form-input" value="${escHtml((lead && lead.email) || "")}"></div>
-        <div class="form-group"><label>Phone</label><input type="tel" id="f-phone" class="form-input" value="${escHtml((lead && lead.phone) || "")}"></div>
-      </div>
-      <div class="form-section-title">Address</div>
-      <div class="form-group form-group-full" style="margin-bottom:12px">
-        <label>Street Address</label>
-        <input type="text" id="f-address" class="form-input" placeholder="e.g. 125 Brown Rd" value="${escHtml((lead && lead.address) || "")}">
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>City</label><input type="text" id="f-city" class="form-input" value="${escHtml((lead && lead.city) || "")}"></div>
-        <div class="form-group"><label>State</label><input type="text" id="f-state" class="form-input" value="${escHtml((lead && lead.state) || "")}"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group"><label>Zip</label><input type="text" id="f-zip" class="form-input" value="${escHtml((lead && lead.zip) || "")}"></div>
-        <div class="form-group">
-          <label>Lead Type</label>
-          <select id="f-leadtype" class="form-input">
-            <option value="">Select type...</option>
-            ${Config.leadTypes
-              .map(function (t) {
-                return `<option value="${t}" ${lead && lead.leadType === t ? "selected" : ""}>${t}</option>`;
-              })
-              .join("")}
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Status</label>
-          <select id="f-status" class="form-input">
-            ${Config.leadStatuses
-              .map(function (s) {
-                return `<option value="${s}" ${((lead && lead.status) || "New") === s ? "selected" : ""}>${s}</option>`;
-              })
-              .join("")}
-          </select>
-        </div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Assigned To</label>
-          <select id="f-assigned" class="form-input">
-            <option value="">Unassigned</option>
-            ${contractors
-              .map(function (c) {
-                return `<option value="${c}" ${lead && lead.assignedTo === c ? "selected" : ""}>${c}</option>`;
-              })
-              .join("")}
-          </select>
-        </div>
-        <div class="form-group"><label>Last Contacted</label><input type="date" id="f-lastcontacted" class="form-input" value="${lead && lead.lastContacted ? lead.lastContacted.split("T")[0] : ""}"></div>
-      </div>
-      <div class="form-section-title">Customer Info</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Monthly Recurring Charge (MRC)</label>
-          <input type="text" id="f-mrc" class="form-input" placeholder="e.g. $104.49" value="${escHtml((lead && lead.currentMRC) || "")}">
-        </div>
-        <div class="form-group">
-          <label>Current Products</label>
-          <select id="f-products" class="form-input">
-            <option value="">Select products...</option>
-            ${Config.currentProducts
-              .map(function (p) {
-                return `<option value="${p}" ${lead && lead.currentProducts === p ? "selected" : ""}>${p}</option>`;
-              })
-              .join("")}
-          </select>
-        </div>
-      </div>
-      <div class="form-group form-group-full" style="margin-bottom:16px">
-        <label>AutoPay</label>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:6px">
-          ${["ACH - Debit Card", "ACH - Credit Card", "No Auto Pay"]
-            .map(function (opt) {
-              const checked = lead && lead.autoPay === opt ? "checked" : "";
-              return `<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-              <input type="radio" name="f-autopay" value="${opt}" ${checked} style="accent-color:#2563B0;width:14px;height:14px"> ${opt}
-            </label>`;
-            })
-            .join("")}
-        </div>
-      </div>
-      <div class="form-group form-group-full">
-        <label>Notes History</label>
-        ${
-          lead && lead.notes
-            ? `
-        <div style="background:#F4F7FD;border:1px solid #D0DCF0;border-radius:6px;padding:12px 14px;margin-bottom:10px;max-height:180px;overflow-y:auto">
-          ${(lead.notes || "")
-            .split("\n")
-            .filter(function (l) {
-              return l.trim();
-            })
-            .map(function (line) {
-              const match = line.match(
-                /^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/,
-              );
-              if (match) {
-                const date = match[1];
-                const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
-                const text = match[3];
-                return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
-                <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
-                  <span style="font-family:var(--font-mono);font-size:10px;color:#2563B0;font-weight:700;background:#E8F0FF;padding:1px 6px;border-radius:3px">${date}</span>
-                  ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#6B85B0">${escHtml(agent)}</span>` : ""}
-                </div>
-                <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
-              </div>`;
-              }
-              return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8"><div style="margin-bottom:3px"><span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:#F4F7FD;padding:1px 6px;border-radius:3px">Legacy note — author unknown</span></div><span style="font-size:13px;color:#4A6080">${escHtml(line)}</span></div>`;
-            })
-            .join("")}
-        </div>`
-            : `<div style="font-size:12px;color:#8EA5C8;margin-bottom:10px;font-family:var(--font-mono)">No notes yet.</div>`
+  const statusSelect = clone.getElementById("f-status");
+  Config.leadStatuses.forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.textContent = s;
+    if ((lead?.status || "New") === s) opt.selected = true;
+    statusSelect.appendChild(opt);
+  });
+
+  const assignedSelect = clone.getElementById("f-assigned");
+  contractors.forEach((c) => {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    if (lead && lead.assignedTo === c) opt.selected = true;
+    assignedSelect.appendChild(opt);
+  });
+
+  const productsSelect = clone.getElementById("f-products");
+  Config.currentProducts.forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    if (lead && lead.currentProducts === p) opt.selected = true;
+    productsSelect.appendChild(opt);
+  });
+
+  // 5. Build AutoPay Radios
+  const autopayContainer = clone.getElementById("f-autopay-container");
+  ["ACH - Debit Card", "ACH - Credit Card", "No Auto Pay"].forEach((opt) => {
+    const isChecked = lead && lead.autoPay === opt ? "checked" : "";
+    autopayContainer.innerHTML += `
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="radio" name="f-autopay" value="${opt}" ${isChecked} style="accent-color:#2563B0;width:14px;height:14px"> ${opt}
+      </label>`;
+  });
+
+  // 6. Notes History Parser
+  const notesHistory = clone.getElementById("modal-notes-history");
+  if (lead && lead.notes && lead.notes.trim()) {
+    const notesHtml = lead.notes
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((line) => {
+        const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
+        if (match) {
+          const date = match[1];
+          const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
+          const text = match[3];
+          return `
+            <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
+                <span style="font-family:var(--font-mono);font-size:10px;color:#2563B0;font-weight:700;background:#E8F0FF;padding:1px 6px;border-radius:3px">${date}</span>
+                ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#6B85B0">${escHtml(agent)}</span>` : ""}
+              </div>
+              <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
+            </div>`;
         }
-        <label style="margin-top:4px">Add Note</label>
-        <textarea id="f-notes" class="form-input form-textarea" placeholder="Add a note — will be date-stamped automatically on save..."></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn-primary" onclick="${isEdit ? "submitEditLead()" : "submitAddLead()"}">${isEdit ? "Save Changes" : "Add Lead"}</button>
-    </div>
-  `;
+        return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8"><div style="margin-bottom:3px"><span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:#F4F7FD;padding:1px 6px;border-radius:3px">Legacy note — author unknown</span></div><span style="font-size:13px;color:#4A6080">${escHtml(line)}</span></div>`;
+      })
+      .join("");
+
+    notesHistory.innerHTML = `<div style="background:#F4F7FD;border:1px solid #D0DCF0;border-radius:6px;padding:12px 14px;margin-bottom:10px;max-height:180px;overflow-y:auto">${notesHtml}</div>`;
+  } else {
+    notesHistory.innerHTML = `<div style="font-size:12px;color:#8EA5C8;margin-bottom:10px;font-family:var(--font-mono)">No notes yet.</div>`;
+  }
+
+  // 7. Mount & Display
+  modalContainer.appendChild(clone);
   document.getElementById("modal-overlay").style.display = "flex";
 }
 
@@ -2581,39 +2593,72 @@ const UI = {
       el.remove();
     }, 2600);
   },
-  // soldBy = agent who made the sale
-  // forAgent = lead's assigned agent (if different from soldBy)
-  showSaleBanner: function (leadName, soldBy, forAgent) {
-    const existing = document.getElementById("sale-banner");
-    if (existing) existing.remove();
-    const banner = document.createElement("div");
-    banner.id = "sale-banner";
+};
 
-    // Build message:
-    // "Noah just made a sale for Jon — Customer Name"
-    // "Stephanie just closed a sale! — Customer Name"
-    const message = forAgent
-      ? `<strong>${escHtml(soldBy)}</strong> just made a sale for <strong>${escHtml(forAgent)}</strong> — <strong>${escHtml(leadName)}</strong>`
-      : `<strong>${escHtml(soldBy || "Someone")}</strong> just closed a sale! — <strong>${escHtml(leadName)}</strong>`;
+const Ticker = {
+  update: function () {
+    const tickerEl = document.getElementById("sales-ticker-content");
+    if (!tickerEl) return;
 
-    banner.innerHTML = `
-      <div style="display:flex;align-items:center;gap:16px;justify-content:center;flex:1">
-        <span style="font-size:20px">&#127881;</span>
-        <span>${message}</span>
-        <span style="font-size:20px">&#127881;</span>
-      </div>
-      <button onclick="document.getElementById('sale-banner').remove()"
-        style="background:transparent;border:1px solid rgba(255,255,255,0.3);color:white;padding:4px 12px;border-radius:4px;cursor:pointer;font-family:'Rajdhani',sans-serif;font-size:13px;flex-shrink:0">
-        Dismiss
-      </button>`;
-    banner.style.cssText = `
-      position:fixed;top:32px;left:0;right:0;z-index:9997;
-      background:linear-gradient(90deg,#0D1B3E,#1B4F8A,#0D1B3E);
-      color:#FFFFFF;padding:12px 24px;display:flex;align-items:center;gap:16px;
-      font-family:'Rajdhani',sans-serif;font-size:18px;font-weight:600;letter-spacing:1px;
-      border-bottom:3px solid #00FF88;box-shadow:0 4px 24px rgba(0,255,136,0.3);
-      animation:bannerSlide 0.4s ease both;
-    `;
-    document.body.appendChild(banner);
+    // Grab today's date string (e.g., "Fri Apr 10 2026")
+    const todayStr = new Date().toDateString();
+
+    // 1. Find all leads sold TODAY
+    const soldToday = State.leads.filter((l) => {
+      const isSold = l.status && l.status.toLowerCase().includes("sold");
+      // Check if the lead was last updated today
+      const isFromToday =
+        l.lastContacted &&
+        new Date(l.lastContacted).toDateString() === todayStr;
+
+      return isSold && isFromToday;
+    });
+
+    // 2. Calculate Top 5 Agents (Today Only)
+    const agentSales = {};
+    soldToday.forEach((l) => {
+      const seller = l.soldBy || l.assignedTo;
+      if (seller) {
+        agentSales[seller] = (agentSales[seller] || 0) + 1;
+      }
+    });
+
+    const topAgents = Object.entries(agentSales)
+      .sort((a, b) => b[1] - a[1]) // Sort highest to lowest
+      .slice(0, 5) // Grab top 5
+      .map(
+        (entry, i) =>
+          `<strong>#${i + 1} ${escHtml(entry[0])}</strong> (${entry[1]})`,
+      );
+
+    // 3. Grab the 5 most recent sales (Today Only)
+    const recentSales = soldToday
+      .slice(-5)
+      .reverse()
+      .map((l) => {
+        const soldBy = l.soldBy || l.assignedTo || "Someone";
+        const forAgent = l.assignedTo;
+
+        if (forAgent && soldBy !== forAgent) {
+          return `🎉 <strong>${escHtml(soldBy)}</strong> just made a sale for <strong>${escHtml(forAgent)}</strong> — ${escHtml(l.name)}`;
+        } else {
+          return `🎉 <strong>${escHtml(soldBy)}</strong> just closed a sale! — ${escHtml(l.name)}`;
+        }
+      });
+
+    // 4. Build the string with new "TODAY" labels
+    let textParts = [];
+    if (recentSales.length > 0) {
+      textParts.push(`🔥 TODAY'S RECENT: ${recentSales.join("  •  ")}`);
+    }
+    if (topAgents.length > 0) {
+      textParts.push(`🏆 TODAY'S LEADERS: ${topAgents.join("  •  ")}`);
+    }
+
+    // 5. Inject it
+    tickerEl.innerHTML =
+      textParts.length > 0
+        ? textParts.join("  |  ")
+        : "🚀 Let's make some sales today!";
   },
 };
