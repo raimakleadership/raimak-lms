@@ -493,25 +493,22 @@ async function recycleAllLeads() {
 function startSalesFeedPolling() {
   if (State.salesFeedTimer) clearInterval(State.salesFeedTimer);
 
-  // Track by IDs not count — prevents false positives on navigation
   let knownSaleIds = new Set(
     (State.todaySales || []).map(function (l) {
       return l.id;
     }),
   );
 
-  State.salesFeedTimer = setInterval(async function () {
+  // 1. Wrap the entire fetch and render logic in a named inner function
+  async function pollSalesData() {
     try {
       const newSales = await Graph.getTodaySales();
 
-      // Only trigger banner for genuinely new sales not seen before
       const newOnes = newSales.filter(function (l) {
         return !knownSaleIds.has(l.id);
       });
+
       if (newOnes.length) {
-        const latest = newOnes[newOnes.length - 1];
-        const soldBy = latest && latest.soldBy;
-        const assignee = latest && latest.assignedTo;
         Ticker.update();
         UI.showConfetti();
         newOnes.forEach(function (l) {
@@ -522,21 +519,43 @@ function startSalesFeedPolling() {
       State.todaySales = newSales;
 
       if (State.currentView === "dashboard") {
-        const feed = document.getElementById("sales-feed");
+        const feed = document.getElementById("dash-sales-feed");
         const time = document.getElementById("sales-feed-time");
+
         if (!feed) return;
+
         if (time)
           time.textContent = "Updated " + formatTime(new Date().toISOString());
-        if (!newSales.length) return;
-        feed.innerHTML = newSales
+
+        if (!newSales || !newSales.length) {
+          feed.innerHTML = `<p class="empty-state" style="padding:24px; text-align:center;">No sales yet today.</p>`;
+          return;
+        }
+
+        const nameLookup = {};
+        (State.contractors || []).forEach((c) => {
+          if (c.email) nameLookup[c.email.toLowerCase().trim()] = c.name;
+        });
+
+        function formatAgentName(rawString) {
+          if (!rawString) return "Unassigned";
+          const lower = rawString.toLowerCase().trim();
+          return nameLookup[lower] || rawString;
+        }
+
+        feed.innerHTML = [...newSales]
+          .sort(function (a, b) {
+            return new Date(b.modified) - new Date(a.modified);
+          })
           .slice(0, 6)
           .map(function (l) {
+            const displayAgent = formatAgentName(l.soldBy || l.assignedTo);
             return `
           <div class="sale-entry">
             <div class="sale-icon">&#127881;</div>
             <div class="sale-info">
               <span class="sale-name">${escHtml(l.name)}</span>
-              <span class="sale-agent">${escHtml(l.assignedTo || "Unassigned")}</span>
+              <span class="sale-agent">${escHtml(displayAgent)}</span>
             </div>
             <span class="sale-time">${formatTime(l.modified)}</span>
           </div>`;
@@ -544,9 +563,13 @@ function startSalesFeedPolling() {
           .join("");
       }
     } catch (e) {
-      /* silent */
+      console.error("Sales feed polling error:", e);
     }
-  }, Config.salesFeedInterval);
+  }
+
+  // 2. THE FIX: Run it immediately right now, THEN start the interval timer
+  pollSalesData();
+  State.salesFeedTimer = setInterval(pollSalesData, Config.salesFeedInterval);
 }
 
 // ============================================================

@@ -1,21 +1,21 @@
 // Raimak LMS - Graph API / SharePoint Data Layer v3.0
 
 const Graph = (() => {
-
-  const base  = Config.sharePoint.graphBase;
-  const host  = Config.sharePoint.hostname;
+  const base = Config.sharePoint.graphBase;
+  const host = Config.sharePoint.hostname;
   const lists = Config.sharePoint.lists;
-  let siteIds    = { leadship: null, team: null };
+  let siteIds = { leadship: null, team: null };
   let agentCache = null;
 
   // ── Generic Fetch ──────────────────────────────────────────
-  async function apiFetch(url, method = "GET", body = null) {
+  async function apiFetch(url, method = "GET", body = null, maxRetries = 3) {
     const token = await Auth.getToken();
     if (!token) {
       console.warn("No auth token available — redirecting to sign in.");
       Auth.signIn();
       return null;
     }
+
     const opts = {
       method,
       headers: {
@@ -24,35 +24,74 @@ const Graph = (() => {
       },
     };
     if (body) opts.body = JSON.stringify(body);
-    const res = await fetch(url, opts);
-    if (!res.ok) {
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const res = await fetch(url, opts);
+
+      if (res.ok) {
+        if (res.status === 204) return null;
+        return res.json();
+      }
+
+      // Intercept 429 Throttling
+      if (res.status === 429) {
+        // Microsoft provides the wait time in seconds.
+        // If missing, we use exponential backoff (2s, 4s, 8s...)
+        const retryAfterStr = res.headers.get("Retry-After");
+        const waitMs = retryAfterStr
+          ? parseInt(retryAfterStr) * 1000
+          : 2 ** attempt * 1000;
+
+        console.warn(
+          `Graph API Throttled! Pausing for ${waitMs}ms (Attempt ${attempt} of ${maxRetries})`,
+        );
+
+        // Pause execution without freezing the browser
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue; // Loop restarts and tries the fetch again
+      }
+
+      // If it's a different error (401, 404, etc.), throw it normally
       const err = await res.json().catch(() => ({}));
-      throw new Error((err.error && err.error.message) || ("HTTP " + res.status));
+      throw new Error((err.error && err.error.message) || "HTTP " + res.status);
     }
-    if (res.status === 204) return null;
-    return res.json();
+
+    throw new Error("Microsoft Graph request failed after max retries.");
   }
 
   // ── Resolve Site IDs ───────────────────────────────────────
   async function resolveSiteIds() {
     if (siteIds.leadship && siteIds.team) return;
     const [s1, s2] = await Promise.all([
-      apiFetch(base + "/sites/" + host + ":/" + Config.sharePoint.sites.leadship),
+      apiFetch(
+        base + "/sites/" + host + ":/" + Config.sharePoint.sites.leadship,
+      ),
       apiFetch(base + "/sites/" + host + ":/" + Config.sharePoint.sites.team),
     ]);
     siteIds.leadship = s1.id;
-    siteIds.team     = s2.id;
+    siteIds.team = s2.id;
   }
 
   // ── Build Agent ID Cache ───────────────────────────────────
   async function resolveAgentCache() {
     if (agentCache) return agentCache;
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.contractorList + "/items?expand=fields&$top=500";
+    const url =
+      base +
+      "/sites/" +
+      siteIds.team +
+      "/lists/" +
+      lists.contractorList +
+      "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
     agentCache = {};
-    raw.forEach(function(item) {
-      const name = (item.fields && (item.fields.Title || item.fields.ContractorName || "")).toLowerCase().trim();
+    raw.forEach(function (item) {
+      const name = (
+        item.fields &&
+        (item.fields.Title || item.fields.ContractorName || "")
+      )
+        .toLowerCase()
+        .trim();
       if (name) agentCache[name] = parseInt(item.id, 10);
     });
     return agentCache;
@@ -70,11 +109,12 @@ const Graph = (() => {
 
   // ── Paginate ───────────────────────────────────────────────
   async function getAllItems(url) {
-    let items = [], next = url;
+    let items = [],
+      next = url;
     while (next) {
       const data = await apiFetch(next);
       items = items.concat(data.value || []);
-      next  = data["@odata.nextLink"] || null;
+      next = data["@odata.nextLink"] || null;
     }
     return items;
   }
@@ -85,74 +125,109 @@ const Graph = (() => {
 
   async function getLeads() {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields&$top=500";
+    const url =
+      base +
+      "/sites/" +
+      siteIds.team +
+      "/lists/" +
+      lists.leadsList +
+      "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
     return raw.map(normalizeLeadItem);
   }
 
   async function getNextLeadForAgent(agentEmail) {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items?expand=fields&$top=500";
+    const url =
+      base +
+      "/sites/" +
+      siteIds.team +
+      "/lists/" +
+      lists.leadsList +
+      "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
     const leads = raw.map(normalizeLeadItem);
-    return leads.find(l =>
-      l.status === "New" &&
-      !l.assignedTo &&
-      !isInCoolOff(l)
-    ) || null;
+    return (
+      leads.find(
+        (l) => l.status === "New" && !l.assignedTo && !isInCoolOff(l),
+      ) || null
+    );
   }
 
   async function addLead(fields) {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items";
+    const url =
+      base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items";
     const res = await apiFetch(url, "POST", { fields });
     return normalizeLeadItem(res);
   }
 
   async function updateLead(itemId, fields) {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items/" + itemId + "/fields";
+    const url =
+      base +
+      "/sites/" +
+      siteIds.team +
+      "/lists/" +
+      lists.leadsList +
+      "/items/" +
+      itemId +
+      "/fields";
     await apiFetch(url, "PATCH", fields);
   }
 
   async function deleteLead(itemId) {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.leadsList + "/items/" + itemId;
+    const url =
+      base +
+      "/sites/" +
+      siteIds.team +
+      "/lists/" +
+      lists.leadsList +
+      "/items/" +
+      itemId;
     await apiFetch(url, "DELETE");
   }
 
   function normalizeLeadItem(item) {
-    const f     = item.fields || {};
+    const f = item.fields || {};
     const first = f.FirstName || f.First_x0020_Name || "";
-    const last  = f.LastName  || f.Last_x0020_Name  || "";
-    const name  = (first + " " + last).trim() || f.Title || f.LeadName || "";
+    const last = f.LastName || f.Last_x0020_Name || "";
+    const name = (first + " " + last).trim() || f.Title || f.LeadName || "";
     return {
-      id:              item.id,
-      name:            name,
-      firstName:       first,
-      lastName:        last,
-      email:           f.Email         || f.EmailAddress || "",
-      phone:           f.Phone         || f.PhoneNumber  || "",
-      status:          f.Status        || "New",
-      source:          f.Campaign      || f.LeadSource   || f.Source || "",
-      assignedTo:      f.Agent_x0020_Assigned || f.AgentAssigned || f.AssignedTo || f.Agent || "",
-      notes:           f.Notes         || "",
-      address:         f.WorkAddress   || f.Address      || "",
-      city:            f.WorkCity      || f.City         || "",
-      state:           f.State         || "",
-      zip:             f.Zip           || f.ZipCode      || "",
-      cbr:             f.CBR           || "",
-      btn:             f.BTN           || "",
-      lockFlag:        f.LockFlag      || false,
-      callbackAt:      f.CallbackDateTime || null,
-      lastContacted:   f.LastTouchedOn || f.LastContacted || null,
-      createdAt:       item.createdDateTime || f.Created || null,
-      modified:        item.lastModifiedDateTime || null,
-      leadType:        f.Lead_x0020_Type || f.Type || f.Item_x0020_Type || f.LeadType || "",
-      currentMRC:      f.MonthlyRecurringCharge_x0028_MRC || f.CurrentMRC || f.MRC || "",
+      id: item.id,
+      name: name,
+      firstName: first,
+      lastName: last,
+      email: f.Email || f.EmailAddress || "",
+      phone: f.Phone || f.PhoneNumber || "",
+      status: f.Status || "New",
+      source: f.Campaign || f.LeadSource || f.Source || "",
+      assignedTo:
+        f.Agent_x0020_Assigned ||
+        f.AgentAssigned ||
+        f.AssignedTo ||
+        f.Agent ||
+        "",
+      notes: f.Notes || "",
+      address: f.WorkAddress || f.Address || "",
+      city: f.WorkCity || f.City || "",
+      state: f.State || "",
+      zip: f.Zip || f.ZipCode || "",
+      cbr: f.CBR || "",
+      btn: f.BTN || "",
+      lockFlag: f.LockFlag || false,
+      callbackAt: f.CallbackDateTime || null,
+      lastContacted: f.LastTouchedOn || f.LastContacted || null,
+      createdAt: item.createdDateTime || f.Created || null,
+      modified: item.lastModifiedDateTime || null,
+      leadType:
+        f.Lead_x0020_Type || f.Type || f.Item_x0020_Type || f.LeadType || "",
+      currentMRC:
+        f.MonthlyRecurringCharge_x0028_MRC || f.CurrentMRC || f.MRC || "",
       currentProducts: f.CurrentProducts || "",
-      autoPay:         f.AutoPay        || "",
-      previousAgents:  f.PreviousAgents || "",
+      autoPay: f.AutoPay || "",
+      previousAgents: f.PreviousAgents || "",
     };
   }
 
@@ -162,16 +237,22 @@ const Graph = (() => {
 
   async function getContractors() {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.team + "/lists/" + lists.contractorList + "/items?expand=fields&$top=500";
+    const url =
+      base +
+      "/sites/" +
+      siteIds.team +
+      "/lists/" +
+      lists.contractorList +
+      "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
-    return raw.map(item => {
+    return raw.map((item) => {
       const f = item.fields || {};
       return {
-        id:     item.id,
-        name:   f.Title || f.ContractorName || "",
-        email:  f.Email || "",
-        phone:  f.Phone || "",
-        role:   f.Role  || "Agent",
+        id: item.id,
+        name: f.Title || f.ContractorName || "",
+        email: f.Email || "",
+        phone: f.Phone || "",
+        role: f.Role || "Agent",
         active: f.Active !== undefined ? f.Active : true,
       };
     });
@@ -184,26 +265,39 @@ const Graph = (() => {
   async function getActivityLog(limit) {
     limit = limit || 2000;
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.leadship + "/lists/" + lists.activityLog + "/items?expand=fields&$orderby=createdDateTime desc&$top=" + limit;
+    const url =
+      base +
+      "/sites/" +
+      siteIds.leadship +
+      "/lists/" +
+      lists.activityLog +
+      "/items?expand=fields&$orderby=createdDateTime desc&$top=" +
+      limit;
     const raw = await getAllItems(url);
-    return raw.map(item => {
+    return raw.map((item) => {
       const f = item.fields || {};
       return {
-        id:         item.id,
-        leadId:     String(f.LeadID     || f.LeadId   || ""),
-        leadName:   f.Title      || f.LeadName || "",
-        action:     f.ActionType || f.Action   || f.Activity || "",
-        agent:      f.AgentEmail || f.Agent    || "",
+        id: item.id,
+        leadId: String(f.LeadID || f.LeadId || ""),
+        leadName: f.Title || f.LeadName || "",
+        action: f.ActionType || f.Action || f.Activity || "",
+        agent: f.AgentEmail || f.Agent || "",
         agentEmail: f.AgentEmail || "",
-        notes:      f.Notes      || "",
-        timestamp:  item.createdDateTime || f.Created || null,
+        notes: f.Notes || "",
+        timestamp: item.createdDateTime || f.Created || null,
       };
     });
   }
 
   async function logActivity(entry) {
     await resolveSiteIds();
-    const url = base + "/sites/" + siteIds.leadship + "/lists/" + lists.activityLog + "/items";
+    const url =
+      base +
+      "/sites/" +
+      siteIds.leadship +
+      "/lists/" +
+      lists.activityLog +
+      "/items";
     await apiFetch(url, "POST", { fields: entry });
   }
 
@@ -218,68 +312,85 @@ const Graph = (() => {
     const today = new Date().toDateString();
 
     const soldTodayIds = new Set();
-    log.forEach(function(e) {
-      if (e.action === "Status: " + Config.soldStatus &&
-          e.timestamp &&
-          new Date(e.timestamp).toDateString() === today) {
+    log.forEach(function (e) {
+      if (
+        e.action === "Status: " + Config.soldStatus &&
+        e.timestamp &&
+        new Date(e.timestamp).toDateString() === today
+      ) {
         soldTodayIds.add(String(e.leadId));
       }
     });
 
     // Build a map of leadId -> soldBy agent name from activity log
     const soldByMap = {};
-    log.forEach(function(e) {
-      if (e.action === "Status: " + Config.soldStatus &&
-          e.timestamp &&
-          new Date(e.timestamp).toDateString() === today) {
+    log.forEach(function (e) {
+      if (
+        e.action === "Status: " + Config.soldStatus &&
+        e.timestamp &&
+        new Date(e.timestamp).toDateString() === today
+      ) {
         soldByMap[String(e.leadId)] = e.agent;
       }
     });
 
     return rawLeads
-      .filter(function(l) { return soldTodayIds.has(String(l.id)); })
-      .map(function(l) {
-        return Object.assign({}, l, { soldBy: soldByMap[String(l.id)] || null });
+      .filter(function (l) {
+        return soldTodayIds.has(String(l.id));
+      })
+      .map(function (l) {
+        return Object.assign({}, l, {
+          soldBy: soldByMap[String(l.id)] || null,
+        });
       });
   }
 
   // Get daily activity stats per agent for the report.
   // Maps agent emails back to display names via the contractors list.
   async function getDailyStats() {
-    const log          = await getActivityLog(2000);
-    const today        = new Date().toDateString();
-    const todayEntries = log.filter(function(e) {
+    const log = await getActivityLog(2000);
+    const today = new Date().toDateString();
+    const todayEntries = log.filter(function (e) {
       return e.timestamp && new Date(e.timestamp).toDateString() === today;
     });
 
     // Build email → display name map from contractors
     const emailToName = {};
-    (State.contractors || []).forEach(function(c) {
+    (State.contractors || []).forEach(function (c) {
       if (c.email) emailToName[c.email.toLowerCase().trim()] = c.name;
     });
 
     const stats = {};
     for (const entry of todayEntries) {
       const agentEmail = (entry.agent || "").toLowerCase().trim();
-      const agent      = emailToName[agentEmail] || entry.agent || "Unknown";
+      const agent = emailToName[agentEmail] || entry.agent || "Unknown";
 
-      const isContact = entry.action && (
-        entry.action.indexOf("Status:") === 0 ||
-        entry.action === "1st Contact" ||
-        entry.action === "2nd Contact" ||
-        entry.action === "3rd Contact"
-      );
-      if (!stats[agent]) stats[agent] = { agent, contacts: 0, sold: 0, actions: [], uniqueLeads: new Set() };
+      const isContact =
+        entry.action &&
+        (entry.action.indexOf("Status:") === 0 ||
+          entry.action === "1st Contact" ||
+          entry.action === "2nd Contact" ||
+          entry.action === "3rd Contact");
+      if (!stats[agent])
+        stats[agent] = {
+          agent,
+          contacts: 0,
+          sold: 0,
+          actions: [],
+          uniqueLeads: new Set(),
+        };
       if (isContact && entry.leadId) stats[agent].uniqueLeads.add(entry.leadId);
       if (entry.action === "Status: " + Config.soldStatus) stats[agent].sold++;
       stats[agent].actions.push(entry);
     }
 
-    Object.values(stats).forEach(function(s) {
+    Object.values(stats).forEach(function (s) {
       s.contacts = s.uniqueLeads.size;
       delete s.uniqueLeads;
     });
-    return Object.values(stats).sort(function(a, b) { return b.contacts - a.contacts; });
+    return Object.values(stats).sort(function (a, b) {
+      return b.contacts - a.contacts;
+    });
   }
 
   // ============================================================
@@ -297,12 +408,15 @@ const Graph = (() => {
       }
     }
 
-    return leads.map(function(lead) {
+    return leads.map(function (lead) {
       const flags = [];
 
       if (lead.lastContacted) {
         const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
-        if (daysSince < coolOffDays && !Config.terminalStatuses.includes(lead.status)) {
+        if (
+          daysSince < coolOffDays &&
+          !Config.terminalStatuses.includes(lead.status)
+        ) {
           flags.push("cool_off");
         }
         if (lead.status === "3rd Contact" && daysSince >= coolOffDays) {
@@ -311,7 +425,11 @@ const Graph = (() => {
       }
 
       const ref = lead.lastContacted || lead.createdAt;
-      if (ref && !Config.terminalStatuses.includes(lead.status) && lead.status !== "3rd Contact") {
+      if (
+        ref &&
+        !Config.terminalStatuses.includes(lead.status) &&
+        lead.status !== "3rd Contact"
+      ) {
         const daysSince = (now - new Date(ref)) / 86400000;
         if (daysSince > recycleAfterDays) flags.push("needs_recycle");
       }
@@ -320,13 +438,19 @@ const Graph = (() => {
         flags.push("agent_overloaded");
       }
 
-      return Object.assign({}, lead, { flags: flags, agentLeadCount: agentCounts[lead.assignedTo] || 0 });
+      return Object.assign({}, lead, {
+        flags: flags,
+        agentLeadCount: agentCounts[lead.assignedTo] || 0,
+      });
     });
   }
 
   function canAgentTakeLead(agentName, leads) {
-    const count = leads.filter(function(l) {
-      return l.assignedTo === agentName && !Config.terminalStatuses.includes(l.status);
+    const count = leads.filter(function (l) {
+      return (
+        l.assignedTo === agentName &&
+        !Config.terminalStatuses.includes(l.status)
+      );
     }).length;
     return count < Config.rules.maxLeadsPerAgent;
   }
@@ -334,14 +458,18 @@ const Graph = (() => {
   // Recycle a lead — record previous agent, unassign, reset to New
   async function recycleLead(leadId, currentAgent) {
     await resolveSiteIds();
-    const lead    = State ? State.leads.find(function(l){ return l.id === leadId; }) : null;
-    const prev    = lead ? (lead.previousAgents || "") : "";
+    const lead = State
+      ? State.leads.find(function (l) {
+          return l.id === leadId;
+        })
+      : null;
+    const prev = lead ? lead.previousAgents || "" : "";
     const newPrev = prev ? prev + ", " + currentAgent : currentAgent;
     await updateLead(leadId, {
-      Status:               "New",
+      Status: "New",
       Agent_x0020_Assigned: null,
-      PreviousAgents:       newPrev,
-      LastTouchedOn:        null,
+      PreviousAgents: newPrev,
+      LastTouchedOn: null,
     });
   }
 
@@ -354,22 +482,24 @@ const Graph = (() => {
   // Count unique leads an agent contacted today.
   // Accepts email directly for reliable matching against activity log.
   function agentContactsToday(agentEmail, activityLog) {
-    const today      = new Date().toDateString();
+    const today = new Date().toDateString();
     const emailLower = (agentEmail || "").toLowerCase().trim();
     const uniqueLeads = new Set();
-    activityLog.forEach(function(e) {
+    activityLog.forEach(function (e) {
       const entryAgent = (e.agent || "").toLowerCase().trim();
-      const isContact  = e.action && (
-        e.action.indexOf("Status:") === 0 ||
-        e.action === "1st Contact" ||
-        e.action === "2nd Contact" ||
-        e.action === "3rd Contact"
-      );
-      if (isContact &&
-          entryAgent === emailLower &&
-          e.timestamp &&
-          new Date(e.timestamp).toDateString() === today &&
-          e.leadId) {
+      const isContact =
+        e.action &&
+        (e.action.indexOf("Status:") === 0 ||
+          e.action === "1st Contact" ||
+          e.action === "2nd Contact" ||
+          e.action === "3rd Contact");
+      if (
+        isContact &&
+        entryAgent === emailLower &&
+        e.timestamp &&
+        new Date(e.timestamp).toDateString() === today &&
+        e.leadId
+      ) {
         uniqueLeads.add(e.leadId);
       }
     });
@@ -377,11 +507,21 @@ const Graph = (() => {
   }
 
   return {
-    getLeads, addLead, updateLead, deleteLead, assignAgent, recycleLead,
+    getLeads,
+    addLead,
+    updateLead,
+    deleteLead,
+    assignAgent,
+    recycleLead,
     getNextLeadForAgent,
     getContractors,
-    getActivityLog, logActivity,
-    getTodaySales, getDailyStats,
-    applyBusinessRules, canAgentTakeLead, isInCoolOff, agentContactsToday,
+    getActivityLog,
+    logActivity,
+    getTodaySales,
+    getDailyStats,
+    applyBusinessRules,
+    canAgentTakeLead,
+    isInCoolOff,
+    agentContactsToday,
   };
 })();
