@@ -1903,8 +1903,13 @@ function applyFilters() {
     (document.getElementById("filter-status") || {}).value || "all";
   State.filters.assignedTo =
     (document.getElementById("filter-agent") || {}).value || "all";
+
   const wrap = document.getElementById("leads-table-wrap");
-  if (wrap) wrap.innerHTML = renderLeadsTable(getFilteredLeads());
+
+  if (wrap) {
+    // THE FIX: Use replaceChildren instead of innerHTML for DOM elements
+    wrap.replaceChildren(renderLeadsTable(getFilteredLeads()));
+  }
 }
 
 function renderLeadsTable(leads, compact = false, agentView = false) {
