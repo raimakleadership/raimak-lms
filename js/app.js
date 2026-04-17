@@ -5,6 +5,7 @@ const State = {
   contractors: [],
   activityLog: [],
   todaySales: [],
+  drafts: {},
   currentView: "dashboard",
   filters: { status: "all", search: "", assignedTo: "all" },
   editingLeadId: null,
@@ -825,11 +826,6 @@ function renderMyLeads() {
   const template = document.getElementById("tmpl-my-leads");
   const clone = template.content.cloneNode(true);
 
-  // 1. Handle Admin Security (Removes the search box if they are an agent)
-  if (!isAdmin()) {
-    clone.querySelectorAll(".admin-only").forEach((el) => el.remove());
-  }
-
   // 2. Populate Header
   clone.getElementById("myleads-subtitle").textContent =
     `// ${myLeads.length} remaining · lead ${Math.min(_currentFeedIndex + 1, myLeads.length || 1)} of ${myLeads.length}`;
@@ -908,7 +904,6 @@ function renderMyLeads() {
 }
 
 function searchMyLeads(q) {
-  const leads = window._myLeads || [];
   const wrap = document.getElementById("my-leads-table");
   if (!wrap) return;
 
@@ -917,18 +912,46 @@ function searchMyLeads(q) {
     return;
   }
 
-  const filtered = leads.filter((l) => {
-    return (
-      l.name.toLowerCase().includes(q.toLowerCase()) ||
-      (l.phone || "").includes(q) ||
-      (l.btn || "").includes(q) ||
-      (l.cbr || "").includes(q) ||
-      (l.address || "").toLowerCase().includes(q.toLowerCase())
-    );
+  const queryLower = q.trim().toLowerCase();
+
+  // THE UPGRADE: Check for our future toggle switch.
+  // If it doesn't exist yet, default to true so you can search everyone right now.
+  const toggleEl = document.getElementById("toggle-search-all");
+  const searchAll = toggleEl ? toggleEl.checked : true;
+
+  // Choose the data source based on the toggle
+  const dataSource = searchAll ? State.leads : window._myLeads || [];
+
+  const filtered = dataSource.filter((l) => {
+    const isAssigned = searchAll
+      ? l.assignedTo && l.assignedTo.trim() !== ""
+      : true;
+
+    const matchesSearch =
+      (l.name && l.name.toLowerCase().includes(queryLower)) ||
+      (l.phone && l.phone.includes(queryLower)) ||
+      (l.btn && l.btn.includes(queryLower)) ||
+      (l.cbr && l.cbr.includes(queryLower)) ||
+      (l.address && l.address.toLowerCase().includes(queryLower));
+
+    return isAssigned && matchesSearch;
   });
 
   if (filtered.length) {
-    wrap.replaceChildren(renderLeadsTable(filtered, false, true));
+    // THE QOL UPGRADE: Slice down to 25 max for instant rendering
+    const displayLeads = filtered.slice(0, 25);
+
+    // Draw the table
+    wrap.replaceChildren(renderLeadsTable(displayLeads, false, true));
+
+    // Add a helpful hint if we truncated the list
+    if (filtered.length > 25) {
+      const hint = document.createElement("div");
+      hint.style.cssText =
+        "text-align:center; padding:12px; font-size:12px; color:#64748b; font-style:italic; border-top:1px solid #e2e8f0;";
+      hint.textContent = `+ ${filtered.length - 25} more matches. Keep typing to narrow it down.`;
+      wrap.appendChild(hint);
+    }
   } else {
     wrap.innerHTML = `<div class="empty-state">No leads found for "${escHtml(q)}"</div>`;
   }
@@ -1031,10 +1054,15 @@ function renderLeadFeedCard(myLeads, contactsToday) {
     soldBySelect.appendChild(option);
   });
 
+  // THE DRAFT PEEK: Check for a saved AutoPay draft to use in the HTML generation
+  const draft = State.drafts[lead.id] || {};
+  const activeAutoPay =
+    draft.autoPay !== undefined ? draft.autoPay : lead.autoPay;
+
   // AutoPay Radios
   const autoPayContainer = clone.getElementById("feed-autopay-container");
   ["ACH - Debit Card", "ACH - Credit Card", "No Auto Pay"].forEach((opt) => {
-    const isChecked = lead.autoPay === opt ? "checked" : "";
+    const isChecked = activeAutoPay === opt ? "checked" : "";
     autoPayContainer.innerHTML += `
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#1A2640;background:#F4F7FD;border:1px solid #D0DCF0;padding:8px 14px;border-radius:6px;">
         <input type="radio" name="feed-autopay" value="${opt}" ${isChecked} style="accent-color:#2563B0"> ${opt}
@@ -1112,6 +1140,40 @@ function renderLeadFeedCard(myLeads, contactsToday) {
 
   // Save Button Action
   clone.getElementById("feed-save-btn").onclick = () => agentSaveAll(lead.id);
+
+  // -----------------------------------------
+  // THE DRAFT MEMORY ENABLER
+  // -----------------------------------------
+  const inputsToDraft = [
+    { id: "feed-btn", key: "btn" },
+    { id: "feed-mrc", key: "mrc" },
+    { id: "feed-cbr", key: "cbr" },
+    { id: "feed-notes", key: "notes" },
+    { id: "feed-products", key: "products" },
+    { id: "feed-sold-by", key: "soldBy" },
+  ];
+
+  inputsToDraft.forEach((item) => {
+    const el = clone.getElementById(item.id);
+    if (el) {
+      if (draft[item.key] !== undefined) {
+        el.value = draft[item.key];
+      }
+      const eventType = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(eventType, (e) =>
+        updateLeadDraft(lead.id, item.key, e.target.value),
+      );
+    }
+  });
+
+  const allAutoPayRadios = clone.querySelectorAll('input[name="feed-autopay"]');
+  if (allAutoPayRadios.length > 0) {
+    allAutoPayRadios.forEach((r) => {
+      r.addEventListener("change", (e) =>
+        updateLeadDraft(lead.id, "autoPay", e.target.value),
+      );
+    });
+  }
 
   // Wrap and Return
   const wrapper = document.createElement("div");
@@ -1262,8 +1324,7 @@ async function agentSaveAll(leadId) {
 
     // Wait for all of them to finish at the exact same time
     await Promise.all(networkTasks);
-
-    // 2. IN-MEMORY UPDATE: Update the local state so we don't need loadAllData()
+    delete State.drafts[leadId];
     lead.status = newStatus;
     lead.notes = notes;
     if (mrc) lead.mrc = mrc; // Assuming your state keys match your variables
@@ -1457,8 +1518,8 @@ function renderAssignLeads() {
         selectedState === "all" ||
         (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
 
-      // 3. THE NEW RULE: If checked, lead must have NO previous agents
-      const unworkedMatch = !requireUnworked || !l.previousAgents;
+      // THE UPGRADE: Must have NO previous agents AND NO MRC value
+      const unworkedMatch = !requireUnworked || (!l.previousAgents && !l.mrc);
 
       return typeMatch && stateMatch && unworkedMatch;
     });
@@ -1616,20 +1677,27 @@ async function bulkAssignToSelectedAgent() {
     return;
   }
 
-  // 1. Filter by unassigned, terminal status, type, AND state
   const unassigned = State.leads.filter(function (l) {
+    // THE GHOST RECORD SHIELD
+    const isValidLead = l && l.id && (l.name || l.phone);
+
     const isAvailable =
       !l.assignedTo && !Config.terminalStatuses.includes(l.status);
-
     const matchesType =
       selectedType === "all" ||
       (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
-
     const matchesState =
       selectedState === "all" ||
       (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
+    const matchesUnworked = !requireUnworked || (!l.previousAgents && !l.mrc);
 
-    return isAvailable && matchesType && matchesState;
+    return (
+      isValidLead &&
+      isAvailable &&
+      matchesType &&
+      matchesState &&
+      matchesUnworked
+    );
   });
 
   // 2. Filter out leads the agent has previously worked
@@ -1801,7 +1869,8 @@ function renderLeads() {
   });
 
   // 5. Populate Filters (and restore any previous search state)
-  clone.getElementById("search-input").value = State.filters.search || "";
+  const searchInput = clone.getElementById("search-input");
+  if (searchInput) searchInput.value = State.filters.search || "";
 
   const statusFilter = clone.getElementById("filter-status");
   Config.leadStatuses.forEach((s) => {
@@ -1821,10 +1890,81 @@ function renderLeads() {
     agentFilter.appendChild(option);
   });
 
-  // 6. Draw the Table
-  clone
-    .getElementById("leads-table-wrap")
-    .replaceChildren(renderLeadsTable(getFilteredLeads()));
+  // 6. THE SMART PAGINATION RENDERER
+  let currentPage = 1;
+  const itemsPerPage = 50;
+
+  // Build the pagination controls dynamically
+  const paginationWrap = document.createElement("div");
+  paginationWrap.style.cssText =
+    "display:flex; gap:6px; align-items:center; justify-content:flex-end; padding: 12px 0; margin-top: 8px;";
+  paginationWrap.innerHTML = `
+    <button id="leads-prev-page" class="btn-secondary" style="padding: 6px 12px; font-size:13px;">&larr; Prev</button>
+    <span id="leads-page-indicator" style="font-family:var(--font-mono); font-size:13px; font-weight:600; color:#0D1B3E; min-width: 80px; text-align: center;">Pg 1</span>
+    <button id="leads-next-page" class="btn-secondary" style="padding: 6px 12px; font-size:13px;">Next &rarr;</button>
+  `;
+
+  // Insert the controls right below the table wrapper inside the clone
+  const tableWrap = clone.getElementById("leads-table-wrap");
+  if (tableWrap) {
+    tableWrap.parentNode.insertBefore(paginationWrap, tableWrap.nextSibling);
+  }
+
+  const prevBtn = paginationWrap.querySelector("#leads-prev-page");
+  const nextBtn = paginationWrap.querySelector("#leads-next-page");
+  const pageIndicator = paginationWrap.querySelector("#leads-page-indicator");
+
+  function updateTable() {
+    // A. Grab the master list using your existing logic
+    const filtered = getFilteredLeads();
+
+    // B. Run Pagination Math
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
+
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+
+    // C. Update UI Text & Buttons
+    if (pageIndicator)
+      pageIndicator.textContent = `Pg ${currentPage} / ${totalPages}`;
+
+    if (prevBtn) {
+      prevBtn.disabled = currentPage === 1;
+      prevBtn.style.opacity = currentPage === 1 ? "0.4" : "1";
+    }
+    if (nextBtn) {
+      nextBtn.disabled = currentPage === totalPages;
+      nextBtn.style.opacity = currentPage === totalPages ? "0.4" : "1";
+    }
+
+    // D. Slice down to 50 items and draw
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const displayLeads = filtered.slice(startIndex, startIndex + itemsPerPage);
+
+    // This updates the live DOM perfectly because `tableWrap` maintains its
+    // pointer to the element even after the clone is mounted to the screen.
+    if (tableWrap) {
+      tableWrap.replaceChildren(renderLeadsTable(displayLeads));
+    }
+  }
+
+  // Attach button listeners
+  if (prevBtn)
+    prevBtn.addEventListener("click", () => {
+      if (currentPage > 1) {
+        currentPage--;
+        updateTable();
+      }
+    });
+  if (nextBtn)
+    nextBtn.addEventListener("click", () => {
+      currentPage++;
+      updateTable();
+    });
+
+  // Initial draw before mounting
+  updateTable();
 
   // 7. Mount!
   mainContent.appendChild(clone);
@@ -2056,25 +2196,26 @@ async function confirmClearAll() {
 }
 
 function getFilteredLeads() {
-  let leads = State.leads.slice();
   const { status, search, assignedTo } = State.filters;
-  if (status !== "all")
-    leads = leads.filter(function (l) {
-      return l.status === status;
-    });
-  if (assignedTo !== "all")
-    leads = leads.filter(function (l) {
-      return l.assignedTo === assignedTo;
-    });
-  if (search.trim()) {
-    const q = search.toLowerCase();
-    leads = leads.filter(function (l) {
-      return (
-        l.name.toLowerCase().includes(q) || l.email.toLowerCase().includes(q)
-      );
-    });
-  }
-  return leads;
+  const q = (search || "").trim().toLowerCase();
+
+  return State.leads.filter(function (l) {
+    // 1. Status Match
+    const matchStatus = status === "all" || l.status === status;
+
+    // 2. Search Match (with safety fallbacks to prevent crashes)
+    const matchSearch =
+      !q ||
+      (l.name && l.name.toLowerCase().includes(q)) ||
+      (l.email && l.email.toLowerCase().includes(q)) ||
+      (l.phone && l.phone.includes(q));
+
+    // 3. STRICT Agent Match (No override)
+    const matchAgent = assignedTo === "all" || l.assignedTo === assignedTo;
+
+    // The lead must pass all three tests to show up on the screen
+    return matchStatus && matchSearch && matchAgent;
+  });
 }
 
 function applyFilters() {
@@ -2367,37 +2508,299 @@ function renderActivity() {
     navigate("myleads");
     return;
   }
-  const { activityLog } = State;
+
+  const { activityLog, contractors } = State;
+
+  // 1. THE PREDICTABLE IDENTITY MAP
+  const identityMap = {};
+
+  function getStandardEmail(name) {
+    if (!name) return "";
+    const parts = name.trim().toLowerCase().split(/\s+/);
+    if (parts.length >= 2) {
+      return `${parts[0].charAt(0)}.${parts[parts.length - 1]}@raimak.com`;
+    }
+    return "";
+  }
+
+  function registerPerson(name, knownEmail) {
+    if (!name) return;
+    const officialName = name.trim();
+    const lowerName = officialName.toLowerCase();
+
+    identityMap[lowerName] = officialName;
+
+    const generatedEmail = getStandardEmail(officialName);
+    if (generatedEmail) identityMap[generatedEmail] = officialName;
+
+    if (knownEmail) identityMap[knownEmail.trim().toLowerCase()] = officialName;
+  }
+
+  (contractors || []).forEach((c) => registerPerson(c.name, c.email));
+
+  const user = State.currentUser;
+  if (user) registerPerson(user.name, user.email);
+
+  // 2. THE BULLETPROOF NORMALIZER
+  function getCleanAgentName(rawString) {
+    if (!rawString) return "";
+    const cleanString = rawString.trim().toLowerCase();
+
+    if (identityMap[cleanString]) {
+      return identityMap[cleanString];
+    }
+
+    return rawString.trim().replace(/\w\S*/g, function (txt) {
+      return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+    });
+  }
+
+  // 3. EXTRACT UNIQUE DATA FOR DROPDOWNS
+  const uniqueAgents = [
+    ...new Set(
+      activityLog.map((e) => getCleanAgentName(e.agent)).filter(Boolean),
+    ),
+  ].sort();
+
+  const uniqueActions = [
+    ...new Set(activityLog.map((e) => (e.action || "").trim()).filter(Boolean)),
+  ].sort();
+
+  // Draw the layout skeleton
   document.getElementById("main-content").innerHTML = `
     <div class="view-header">
-      <h1 class="view-title">Activity Log</h1>
-      <span class="view-subtitle">// ${activityLog.length} entries</span>
+      <div>
+        <h1 class="view-title">Activity Log</h1>
+        <span class="view-subtitle">// ${activityLog.length} total entries</span>
+      </div>
     </div>
+
     <div class="card">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
+        
+        <div>
+          <h2 class="card-title">Recent Activity</h2>
+          <span class="card-meta" id="activity-meta-count">Loading...</span>
+        </div>
+        
+        <div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap; justify-content:flex-end; flex:1;">
+          
+          <div style="display:flex; gap:8px; align-items:center;">
+            
+            <div id="date-inputs-container" style="display:flex; align-items:center; gap:6px; max-width:0px; opacity:0; overflow:hidden; transition:all 0.3s ease-out; white-space:nowrap; pointer-events:none;">
+              <input type="date" id="filter-start-date" class="form-input" style="padding:6px 10px; font-size:13px;">
+              <span style="font-size:13px; color:#666; font-weight:600;">to</span>
+              <input type="date" id="filter-end-date" class="form-input" style="padding:6px 10px; font-size:13px;">
+            </div>
+
+            <label style="display:flex; align-items:center; gap:4px; font-size:13px; font-weight:600; cursor:pointer; color:#0D1B3E; margin:0; white-space:nowrap;">
+              <input type="checkbox" id="toggle-date-filter" style="cursor:pointer; margin:0; width:14px; height:14px;">
+              Date
+            </label>
+          </div>
+
+          <select id="filter-agent" class="form-input" style="padding:6px 24px 6px 10px; font-size:13px; min-width:130px; max-width:160px;">
+            <option value="all">All Agents</option>
+            ${uniqueAgents.map((a) => `<option value="${escHtml(a)}">${escHtml(a)}</option>`).join("")}
+          </select>
+
+          <select id="filter-action" class="form-input" style="padding:6px 24px 6px 10px; font-size:13px; min-width:130px; max-width:160px;">
+            <option value="all">All Actions</option>
+            ${uniqueActions.map((a) => `<option value="${escHtml(a)}">${escHtml(a)}</option>`).join("")}
+          </select>
+
+          <select id="sort-date" class="form-input" style="padding:6px 24px 6px 10px; font-size:13px; min-width:130px; max-width:160px;">
+            <option value="desc">Newest First</option>
+            <option value="asc">Oldest First</option>
+          </select>
+
+          <div style="display:flex; gap:6px; align-items:center; white-space:nowrap; border-left: 1px solid #e2e8f0; padding-left: 12px; margin-left: 4px;">
+            <button id="btn-prev-page" class="btn-secondary" style="padding: 6px 12px; font-size:13px;">&larr; Prev</button>
+            <span id="page-indicator" style="font-family:var(--font-mono); font-size:13px; font-weight:600; color:#0D1B3E; min-width: 50px; text-align: center;">Pg 1</span>
+            <button id="btn-next-page" class="btn-secondary" style="padding: 6px 12px; font-size:13px;">Next &rarr;</button>
+          </div>
+
+        </div>
+      </div>
+      
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>Time</th><th>Lead</th><th>Action</th><th>Agent</th><th>Notes</th></tr></thead>
-          <tbody>
-            ${
-              activityLog.length
-                ? activityLog
-                    .map(function (e) {
-                      return `
-              <tr>
-                <td class="td-mono">${formatDateTime(e.timestamp)}</td>
-                <td>${escHtml(e.leadName || e.leadId || "—")}</td>
-                <td><span class="action-badge">${escHtml(e.action || "—")}</span></td>
-                <td>${escHtml(e.agent || "—")}</td>
-                <td class="td-notes">${escHtml(e.notes || "")}</td>
-              </tr>`;
-                    })
-                    .join("")
-                : `<tr><td colspan="5" class="empty-state">No activity yet.</td></tr>`
-            }
-          </tbody>
+          <tbody id="activity-tbody">
+            </tbody>
         </table>
       </div>
-    </div>`;
+    </div>
+  `;
+
+  // Internal State & DOM Pointers
+  let currentPage = 1;
+  const itemsPerPage = 50;
+
+  const tbody = document.getElementById("activity-tbody");
+  const prevBtn = document.getElementById("btn-prev-page");
+  const nextBtn = document.getElementById("btn-next-page");
+  const pageIndicator = document.getElementById("page-indicator");
+
+  const agentFilter = document.getElementById("filter-agent");
+  const actionFilter = document.getElementById("filter-action");
+  const dateSort = document.getElementById("sort-date");
+  const metaCount = document.getElementById("activity-meta-count");
+
+  // Date filter pointers
+  const dateToggle = document.getElementById("toggle-date-filter");
+  const dateContainer = document.getElementById("date-inputs-container");
+  const startDateFilter = document.getElementById("filter-start-date");
+  const endDateFilter = document.getElementById("filter-end-date");
+
+  // The Smart Table Renderer
+  function updateTable() {
+    const selectedAgent = agentFilter ? agentFilter.value : "all";
+    const selectedAction = actionFilter ? actionFilter.value : "all";
+    const sortOrder = dateSort ? dateSort.value : "desc";
+
+    const isDateActive = dateToggle ? dateToggle.checked : false;
+    const startDateStr = startDateFilter ? startDateFilter.value : "";
+    const endDateStr = endDateFilter ? endDateFilter.value : "";
+
+    const startTimestamp =
+      isDateActive && startDateStr
+        ? new Date(startDateStr + "T00:00:00").getTime()
+        : 0;
+    const endTimestamp =
+      isDateActive && endDateStr
+        ? new Date(endDateStr + "T23:59:59").getTime()
+        : Infinity;
+
+    // Step A: Filter by Agent, Action, AND Date
+    let processedLog = activityLog.filter(function (e) {
+      const matchAgent =
+        selectedAgent === "all" || getCleanAgentName(e.agent) === selectedAgent;
+      const matchAction =
+        selectedAction === "all" || (e.action || "").trim() === selectedAction;
+
+      const logTime = new Date(e.timestamp || 0).getTime();
+      const matchDate = logTime >= startTimestamp && logTime <= endTimestamp;
+
+      return matchAgent && matchAction && matchDate;
+    });
+
+    // Step B: Sort by Date
+    processedLog.sort(function (a, b) {
+      const timeA = new Date(a.timestamp || 0).getTime();
+      const timeB = new Date(b.timestamp || 0).getTime();
+      return sortOrder === "desc" ? timeB - timeA : timeA - timeB;
+    });
+
+    // Step C: Pagination Math
+    const total = processedLog.length;
+    const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
+
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+
+    // Update UI Text
+    pageIndicator.textContent = `Pg ${currentPage} / ${totalPages}`;
+    if (metaCount) metaCount.textContent = `Showing ${total} entries`;
+
+    prevBtn.disabled = currentPage === 1;
+    prevBtn.style.opacity = currentPage === 1 ? "0.4" : "1";
+
+    nextBtn.disabled = currentPage === totalPages;
+    nextBtn.style.opacity = currentPage === totalPages ? "0.4" : "1";
+
+    // Step D: Slice and Draw HTML
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const displayLog = processedLog.slice(
+      startIndex,
+      startIndex + itemsPerPage,
+    );
+
+    if (displayLog.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No activity matches these filters.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = displayLog
+      .map(function (e) {
+        return `
+        <tr>
+          <td class="td-mono">${formatDateTime(e.timestamp)}</td>
+          <td>${escHtml(e.leadName || e.leadId || "—")}</td>
+          <td><span class="action-badge">${escHtml(e.action || "—")}</span></td>
+          <td>${escHtml(getCleanAgentName(e.agent) || "—")}</td>
+          <td class="td-notes">${escHtml(e.notes || "")}</td>
+        </tr>`;
+      })
+      .join("");
+  }
+
+  // Attach Event Listeners
+  if (prevBtn)
+    prevBtn.addEventListener("click", () => {
+      if (currentPage > 1) {
+        currentPage--;
+        updateTable();
+      }
+    });
+  if (nextBtn)
+    nextBtn.addEventListener("click", () => {
+      currentPage++;
+      updateTable();
+    });
+
+  if (agentFilter)
+    agentFilter.addEventListener("change", () => {
+      currentPage = 1;
+      updateTable();
+    });
+  if (actionFilter)
+    actionFilter.addEventListener("change", () => {
+      currentPage = 1;
+      updateTable();
+    });
+  if (dateSort)
+    dateSort.addEventListener("change", () => {
+      currentPage = 1;
+      updateTable();
+    });
+
+  if (startDateFilter)
+    startDateFilter.addEventListener("change", () => {
+      currentPage = 1;
+      updateTable();
+    });
+  if (endDateFilter)
+    endDateFilter.addEventListener("change", () => {
+      currentPage = 1;
+      updateTable();
+    });
+
+  // THE SMOOTH ANIMATION TOGGLE
+  if (dateToggle) {
+    dateToggle.addEventListener("change", (e) => {
+      if (e.target.checked) {
+        // Slide open to the left
+        dateContainer.style.maxWidth = "350px";
+        dateContainer.style.opacity = "1";
+        dateContainer.style.pointerEvents = "auto";
+      } else {
+        // Slide closed to the right
+        dateContainer.style.maxWidth = "0px";
+        dateContainer.style.opacity = "0";
+        dateContainer.style.pointerEvents = "none";
+
+        // Clear values and reset table
+        if (startDateFilter) startDateFilter.value = "";
+        if (endDateFilter) endDateFilter.value = "";
+        currentPage = 1;
+        updateTable();
+      }
+    });
+  }
+
+  // Initialize on first load
+  updateTable();
 }
 
 // ============================================================
@@ -2441,7 +2844,7 @@ function renderLeadModal(lead) {
   clone.getElementById("f-firstname").value = safeVal(lead?.firstName);
   clone.getElementById("f-lastname").value = safeVal(lead?.lastName);
   clone.getElementById("f-email").value = safeVal(lead?.email);
-  clone.getElementById("f-phone").value = safeVal(lead?.phone);
+  clone.getElementById("f-phone").value = safeVal(lead?.cbr);
   clone.getElementById("f-address").value = safeVal(lead?.address);
   clone.getElementById("f-city").value = safeVal(lead?.city);
   clone.getElementById("f-state").value = safeVal(lead?.state);
@@ -2743,7 +3146,14 @@ function exportCSV() {
   a.click();
   UI.showToast("Exported!", "success");
 }
-
+function updateLeadDraft(leadId, fieldName, value) {
+  // If this lead doesn't have a draft object yet, create one
+  if (!State.drafts[leadId]) {
+    State.drafts[leadId] = {};
+  }
+  // Save the keystroke
+  State.drafts[leadId][fieldName] = value;
+}
 function flagLabel(f) {
   return (
     {
