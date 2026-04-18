@@ -1813,7 +1813,7 @@ body::before {
 }
 
 /* ── Contacts Today Badge ───────────────────────────────────── */
-.contacts-today-badge {
+/*.contacts-today-badge {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1832,7 +1832,7 @@ body::before {
   background: var(--green-dim);
   box-shadow: 0 0 12px rgba(16, 240, 128, 0.1);
 }
-
+*/
 /* ── Assign Leads ───────────────────────────────────────────── */
 .assign-agent-grid {
   display: grid;

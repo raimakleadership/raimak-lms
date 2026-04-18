@@ -384,9 +384,13 @@
           <div class="sales-feed" id="dash-sales-feed"></div>
 
           <div class="card-header top-border">
-            <h2 class="card-title">Top 5 Today</h2>
+            <h2 class="card-title">Top 5 Salespeople Today</h2>
           </div>
           <div class="top5-list" id="dash-top5"></div>
+          <div class="card-header top-border">
+            <h2 class="card-title">Top 5 Contacts</h2>
+          </div>
+          <div class="top5-list" id="dash-top5-contacts"></div>
         </div>
       </div>
 
@@ -520,43 +524,109 @@
             class="contacts-today-badge"
             style="background: var(--surface-2); color: var(--text-1)"
           >
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-              />
-              <polyline
-                points="12,6 12,12 16,14"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-            </svg>
-            <span id="myleads-clock" style="color: #555555; font-weight: 600"
-              >--:--:--</span
-            >
+        <style>
+          .viz-clock {
+            background: linear-gradient(145deg, #111827, #1e293b);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 15px rgba(59, 130, 246, 0.15);
+            border-radius: 8px;
+            padding: 6px 18px 6px 12px;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            height: 54px; 
+            box-sizing: border-box;
+          }
+
+          .viz-clock-icon {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.5);
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+            border-radius: 6px;
+            width: 32px; height: 32px;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 16px;
+          }
+        </style>
+            <div class="viz-clock">
+              
+              <div class="viz-clock-icon">
+                ⏱️
+              </div>
+              
+              <div style="display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 2;">
+                <span style="font-family: var(--font-mono, monospace); font-size: 10px; text-transform: uppercase; letter-spacing: 2px; color: #94a3b8; line-height: 1; margin-bottom: 5px; font-weight: 700;">
+                  Lead Time
+                </span>
+                <span id="myleads-clock" style="font-size: 22px; font-weight: 800; color: #f8fafc; line-height: 1; text-shadow: 0 0 10px rgba(255,255,255,0.2); font-family: var(--font-mono, monospace);">
+                  --:--:--
+                </span>
+              </div>
+
+            </div>
           </div>
 
           <div class="contacts-today-badge" id="myleads-contact-badge">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
-              <circle
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                stroke-width="2"
-              />
-              <polyline
-                points="12,6 12,12 16,14"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              />
-            </svg>
-            <span id="myleads-contact-text"></span>
+          <style>
+            .viz-card {
+              background: linear-gradient(145deg, #111827, #1e293b);
+              border: 1px solid rgba(59, 130, 246, 0.4);
+              box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 0 15px rgba(59, 130, 246, 0.15);
+              border-radius: 8px;
+              padding: 6px 18px 6px 12px;
+              display: inline-flex;
+              align-items: center;
+              gap: 12px;
+              position: relative;
+              overflow: hidden;
+              height: 54px; 
+              box-sizing: border-box;
+            }
+
+            .viz-card::before {
+              content: '';
+              position: absolute;
+              top: 0; left: -100%; width: 50%; height: 100%;
+              background: linear-gradient(to right, transparent, rgba(255,255,255,0.06), transparent);
+              transform: skewX(-20deg);
+              animation: viz-sweep 5s infinite cubic-bezier(0.4, 0, 0.2, 1);
+            }
+
+            @keyframes viz-sweep {
+              0% { left: -100%; }
+              20% { left: 200%; }
+              100% { left: 200%; }
+            }
+
+            .viz-icon {
+              background: rgba(59, 130, 246, 0.15);
+              border: 1px solid rgba(59, 130, 246, 0.5);
+              box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+              border-radius: 6px;
+              width: 32px; height: 32px;
+              display: flex; justify-content: center; align-items: center;
+              font-size: 16px;
+            }
+          </style>
+
+          <div class="viz-card">
+            <div class="viz-icon">📞</div>
+            <div style="display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 2;">
+              <span style="font-family: var(--font-mono, monospace); font-size: 9px; text-transform: uppercase; letter-spacing: 2px; color: #94a3b8; line-height: 1; margin-bottom: 3px; font-weight: 700;">
+                Contacts Today
+              </span>
+              <span style="font-size: 18px; font-weight: 800; color: #f8fafc; line-height: 1; text-shadow: 0 0 10px rgba(255,255,255,0.2);">
+                <span id="myleads-contact-text">0</span> 
+                <span style="font-size: 11px; font-weight: 600; color: #3b82f6; text-shadow: 0 0 8px rgba(59, 130, 246, 0.4);">contacts</span>
+              </span>
+            </div>
+          </div>
+
+                    </div>
+                  </div>
+                </div>
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -593,7 +663,6 @@
             stroke-linecap="round"
           />
         </svg>
-        <span id="myleads-limit-text"></span>
       </div>
 
       <div id="lead-feed-wrap"></div>

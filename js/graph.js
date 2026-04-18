@@ -536,27 +536,29 @@ const Graph = (() => {
   // Count unique leads an agent contacted today.
   // Accepts email directly for reliable matching against activity log.
   function agentContactsToday(agentEmail, activityLog) {
-    const today = new Date().toDateString();
     const emailLower = (agentEmail || "").toLowerCase().trim();
     const uniqueLeads = new Set();
+
     activityLog.forEach(function (e) {
-      const entryAgent = (e.agent || "").toLowerCase().trim();
+      // Safety check: Handle both your mapped frontend names AND raw Graph API names
+      const entryAgent = (e.agent || e.AgentEmail || "").toLowerCase().trim();
+      const actionStr = e.action || e.ActionType || "";
+      const leadId = e.leadId || e.LeadID;
+
+      // Is it an actual lead touch?
       const isContact =
-        e.action &&
-        (e.action.indexOf("Status:") === 0 ||
-          e.action === "1st Contact" ||
-          e.action === "2nd Contact" ||
-          e.action === "3rd Contact");
-      if (
-        isContact &&
-        entryAgent === emailLower &&
-        e.timestamp &&
-        new Date(e.timestamp).toDateString() === today &&
-        e.leadId
-      ) {
-        uniqueLeads.add(e.leadId);
+        actionStr.startsWith("Status:") ||
+        actionStr === "1st Contact" ||
+        actionStr === "2nd Contact" ||
+        actionStr === "3rd Contact";
+
+      // If it's a contact, by this agent, add the lead ID to the unique Set
+      if (isContact && entryAgent === emailLower && leadId) {
+        uniqueLeads.add(leadId);
       }
     });
+
+    // A Set automatically prevents duplicates, so its size is the exact number of unique leads worked!
     return uniqueLeads.size;
   }
 

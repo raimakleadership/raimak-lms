@@ -362,6 +362,77 @@ function renderDashboard() {
         .join("")
     : `<p class="empty-state">No sales yet today.</p>`;
 
+  const todayStr = new Date().toLocaleDateString();
+  const agentUniqueLeads = {};
+
+  const aliasMap = {
+    "j.torres@raimak.com": "JULIAN TORRES",
+    // ANY EMAILS THAT ARE SHOWING UP ON THE LEADERBOARD, DO THIS FOR THEM.
+  };
+  // 1. Loop through all logs and count unique leads touched per agent today
+  (State.activityLog || []).forEach((log) => {
+    let isToday = false;
+    if (log.timestamp) {
+      isToday = new Date(log.timestamp).toLocaleDateString() === todayStr;
+    }
+
+    const actionStr = log.action || log.ActionType || "";
+    const isContact =
+      actionStr.startsWith("Status:") ||
+      actionStr === "1st Contact" ||
+      actionStr === "2nd Contact" ||
+      actionStr === "3rd Contact";
+
+    if (isToday && isContact) {
+      let rawAgent = (log.agent || log.AgentEmail || "Unknown")
+        .toLowerCase()
+        .trim();
+
+      // THE FIX: Check the alias map first, then fall back to the contractor list
+      let displayName = aliasMap[rawAgent];
+
+      if (!displayName) {
+        const contractor = State.contractors.find(
+          (c) =>
+            (c.email || "").toLowerCase().trim() === rawAgent ||
+            (c.name || "").toLowerCase().trim() === rawAgent,
+        );
+        displayName = contractor
+          ? contractor.name
+          : log.agent || log.AgentEmail || "Unknown";
+      }
+
+      const leadId = log.leadId || log.LeadID;
+
+      if (!agentUniqueLeads[displayName])
+        agentUniqueLeads[displayName] = new Set();
+      if (leadId) agentUniqueLeads[displayName].add(leadId);
+    }
+  });
+
+  // 2. Convert sets to numbers, sort highest to lowest, and grab the top 5
+  const top5Contacts = Object.entries(agentUniqueLeads)
+    .map(([name, leadSet]) => [name, leadSet.size])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  // 3. Inject exactly like the sales leaderboard, but with blue text for contacts!
+  const dashContactsEl = clone.getElementById("dash-top5-contacts");
+  if (dashContactsEl) {
+    dashContactsEl.innerHTML = top5Contacts.length
+      ? top5Contacts
+          .map(
+            (e, i) => `
+        <div class="top5-row">
+          <span class="top5-rank rank-${i + 1}">${i + 1}</span>
+          <span class="top5-name">${escHtml(e[0])}</span>
+          <span class="top5-count" style="color: var(--blue, #3b82f6);">${e[1]} contact${e[1] !== 1 ? "s" : ""}</span>
+        </div>`,
+          )
+          .join("")
+      : `<p class="empty-state">No contacts logged yet today.</p>`;
+  }
+
   // 5. Inject the Heavy Tables
   clone
     .getElementById("dash-recent-table")
@@ -777,115 +848,94 @@ function renderMyLeads() {
     ? contractor.name.toLowerCase().trim()
     : userName;
 
-  // We only run this filter loop ONCE now!
+  // ==========================================
+  //  THE STRICT BOUNCER
+  // ==========================================
   const myLeads = State.leads.filter((l) => {
     const assigned = (l.assignedTo || "")
       .toLowerCase()
       .replace(/\s+/g, " ")
       .trim();
-    return (
+    const matchesAgent =
       assigned &&
       (assigned === agentName.replace(/\s+/g, " ") ||
         assigned === userName.replace(/\s+/g, " ") ||
-        assigned === userEmail.replace(/\s+/g, " ")) &&
-      !Config.terminalStatuses.includes(l.status)
-    );
+        assigned === userEmail.replace(/\s+/g, " "));
+
+    // If they used the search bar to jump to a specific lead, bypass the bouncer!
+    if (window._forceShowLead) return matchesAgent;
+
+    // Bouncer 1: Is it a terminal status? (Added explicit fallback for "3rd Contact")
+    const isTerminal =
+      Config.terminalStatuses.includes(l.status) || l.status === "3rd Contact";
+
+    // Bouncer 2: Is it in cool-off?
+    const inCoolOff = Graph.isInCoolOff(l);
+
+    // ONLY keep actionable, unworked leads in the deck!
+    return matchesAgent && !isTerminal && !inCoolOff;
   });
 
-  // Keep his global variables intact so we don't break the rest of his code
+  // Keep global variables intact
   window._myLeads = myLeads;
   window._agentName = agentName;
   _leadSaved = false;
 
   if (_currentFeedIndex >= myLeads.length) _currentFeedIndex = 0;
 
-  if (!window._forceShowLead) {
-    while (
-      _currentFeedIndex < myLeads.length &&
-      Graph.isInCoolOff(myLeads[_currentFeedIndex])
-    ) {
-      _currentFeedIndex++;
-    }
-  }
+  // We completely deleted the old `while` loop here because the Bouncer
+  // physically removed the cool-off leads from the array!
 
-  // Instantly reset the flag so the "Next Lead" button goes back to skipping cool-offs normally
   window._forceShowLead = false;
 
-  const contactsToday = Graph.agentContactsToday(
-    (user && user.email) || "",
-    State.activityLog,
-  );
-  const atLimit = contactsToday >= Config.rules.maxContactsPerDay;
-
   // ==========================================
-  //  THE NEW RENDER LOGIC
+  //  THE RENDER LOGIC
   // ==========================================
   const mainContent = document.getElementById("main-content");
   mainContent.innerHTML = "";
-
+  const contactsToday = getMyContactsToday();
   const template = document.getElementById("tmpl-my-leads");
   const clone = template.content.cloneNode(true);
-
-  // 2. Populate Header
+  const textEl = clone.getElementById("myleads-contact-text");
+  if (textEl) {
+    textEl.textContent = contactsToday;
+  }
   clone.getElementById("myleads-subtitle").textContent =
     `// ${myLeads.length} remaining · lead ${Math.min(_currentFeedIndex + 1, myLeads.length || 1)} of ${myLeads.length}`;
-  clone.getElementById("myleads-contact-text").textContent =
-    `${contactsToday}/${Config.rules.maxContactsPerDay} contacts today`;
 
-  if (atLimit) {
-    clone.getElementById("myleads-contact-badge").classList.add("badge-full");
-    clone.getElementById("myleads-limit-alert").style.display = "flex";
-    clone.getElementById("myleads-limit-text").textContent =
-      `Daily limit reached — ${Config.rules.maxContactsPerDay} contacts today. Great work!`;
-  }
-
-  // 3. Inject the active lead card
-  // (Assuming renderLeadFeedCard still returns an HTML string for now)
-  clone.getElementById("lead-feed-wrap").innerHTML = ""; // Clear it first
+  clone.getElementById("lead-feed-wrap").innerHTML = "";
   clone
     .getElementById("lead-feed-wrap")
-    .appendChild(renderLeadFeedCard(myLeads, contactsToday));
+    .appendChild(renderLeadFeedCard(myLeads));
 
-  // 4. Mount
   mainContent.appendChild(clone);
 
   // ==========================================
-  //  5. LIVE CLOCK LOGIC (Smart Timezones)
+  //  LIVE CLOCK LOGIC (Smart Timezones)
   // ==========================================
   const clockEl = document.getElementById("myleads-clock");
 
-  // 1. Figure out which lead they are currently looking at
   const activeLead = myLeads[_currentFeedIndex];
-  console.log("Here is the full Lead Object:", activeLead);
-  // 2. Extract the state (if it exists)
   const leadState =
     activeLead && activeLead.state
       ? activeLead.state.toUpperCase().trim()
       : null;
-  console.log(leadState);
 
   const updateClock = () => {
     if (!clockEl) return;
-
-    // Default to the Agent's local computer time
     let tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-    // If the lead has a state, and we have it in our dictionary, override the timezone!
     if (leadState && stateTimezones[leadState]) {
       tz = stateTimezones[leadState];
     }
-
     try {
-      // Now including seconds, and passing our dynamic timezone!
       clockEl.textContent = new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
-        second: "2-digit", // Added seconds
+        second: "2-digit",
         timeZone: tz,
         timeZoneName: "short",
       });
     } catch (e) {
-      // Safe fallback if something goes weird
       clockEl.textContent = new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
@@ -893,13 +943,9 @@ function renderMyLeads() {
       });
     }
   };
-  // Run it once immediately so it doesn't say "--:--" for the first second
+
   updateClock();
-
-  // Clear any existing timer from previous visits to this page
   if (window._clockTimer) clearInterval(window._clockTimer);
-
-  // Start a new timer that ticks every 1 second (1000ms)
   window._clockTimer = setInterval(updateClock, 1000);
 }
 
@@ -957,9 +1003,54 @@ function searchMyLeads(q) {
   }
 }
 
+function getMyContactsToday() {
+  const logs = State.activityLog || [];
+  const user = State.currentUser || {};
+
+  const myEmail = (user.email || "").toLowerCase().trim();
+  let myName = (user.name || "").toLowerCase().trim();
+
+  const contractor = State.contractors.find(
+    (c) =>
+      (c.email || "").toLowerCase().trim() === myEmail ||
+      (c.name || "").toLowerCase().trim() === myName,
+  );
+  if (contractor) myName = contractor.name.toLowerCase().trim();
+
+  // 1. Get today's local date (e.g., "4/18/2026")
+  const todayString = new Date().toLocaleDateString();
+
+  const uniqueLeads = new Set();
+
+  logs.forEach((log) => {
+    const entryAgent = (log.agent || log.AgentEmail || "").toLowerCase().trim();
+    const actionStr = log.action || log.ActionType || "";
+    const leadId = log.leadId || log.LeadID;
+
+    // 2. Convert the log's timestamp to a local date string and compare
+    let isToday = false;
+    if (log.timestamp) {
+      isToday = new Date(log.timestamp).toLocaleDateString() === todayString;
+    }
+
+    const isMyLog = entryAgent === myEmail || entryAgent === myName;
+    const isContact =
+      actionStr.startsWith("Status:") ||
+      actionStr === "1st Contact" ||
+      actionStr === "2nd Contact" ||
+      actionStr === "3rd Contact";
+
+    // 3. The new requirement: It MUST happen today
+    if (isMyLog && isContact && isToday && leadId) {
+      uniqueLeads.add(leadId);
+    }
+  });
+
+  return uniqueLeads.size;
+}
 let _stagedStatus = null;
 
-function renderLeadFeedCard(myLeads, contactsToday) {
+function renderLeadFeedCard(myLeads) {
   // 1. FIXED LOGIC: Grab the exact lead we are supposed to be looking at!
   let lead = myLeads[_currentFeedIndex];
 
@@ -967,7 +1058,6 @@ function renderLeadFeedCard(myLeads, contactsToday) {
   // but we still want to show them the correct lead!
   const isCoolOff = lead ? Graph.isInCoolOff(lead) : false;
 
-  const atLimit = contactsToday >= Config.rules.maxContactsPerDay;
   _stagedStatus = null;
 
   // 2. Setup Template
@@ -1074,10 +1164,6 @@ function renderLeadFeedCard(myLeads, contactsToday) {
   Config.leadStatuses
     .filter((s) => s !== "New")
     .forEach((s) => {
-      const disabled =
-        atLimit && !Config.terminalStatuses.includes(s)
-          ? "disabled title='Daily limit reached'"
-          : "";
       const isTDM = s === "TDM" ? " ↩" : "";
       const cls =
         "status-btn-" +
@@ -1087,7 +1173,7 @@ function renderLeadFeedCard(myLeads, contactsToday) {
           .replace(/[^a-z0-9-]/g, "");
 
       // We use innerHTML here purely for brevity of building buttons, it's safe enough!
-      statusContainer.innerHTML += `<button class="status-btn ${cls}" id="sbtn-${s.replace(/\s+/g, "-")}" onclick="stageStatus('${lead.id}','${s}')" ${disabled}>${s}${isTDM}</button>`;
+      statusContainer.innerHTML += `<button class="status-btn ${cls}" id="sbtn-${s.replace(/\s+/g, "-")}" onclick="stageStatus('${lead.id}','${s}')">${s}${isTDM}</button>`;
     });
 
   clone.getElementById("feed-today-date").textContent =
@@ -1324,6 +1410,12 @@ async function agentSaveAll(leadId) {
 
     // Wait for all of them to finish at the exact same time
     await Promise.all(networkTasks);
+    State.activityLog.push({
+      leadId: leadId,
+      agent: activityEmail,
+      action: "Status: " + newStatus,
+      timestamp: new Date().toISOString(),
+    });
     delete State.drafts[leadId];
     lead.status = newStatus;
     lead.notes = notes;
@@ -1367,7 +1459,18 @@ async function agentSaveAll(leadId) {
 }
 
 function advanceToNextLead() {
-  _currentFeedIndex++;
+  const currentLead = window._myLeads[_currentFeedIndex];
+
+  if (currentLead) {
+    const isTerminal = Config.terminalStatuses.includes(currentLead.status);
+    const isExhausted = currentLead.status === "3rd Contact";
+    const inCoolOff = Graph.isInCoolOff(currentLead);
+
+    if (!isTerminal && !isExhausted && !inCoolOff) {
+      _currentFeedIndex++;
+    }
+  }
+
   _leadSaved = false;
   renderMyLeads();
 }
@@ -1519,7 +1622,8 @@ function renderAssignLeads() {
         (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
 
       // THE UPGRADE: Must have NO previous agents AND NO MRC value
-      const unworkedMatch = !requireUnworked || (!l.previousAgents && !l.mrc);
+      const unworkedMatch =
+        !requireUnworked || (!l.previousAgents && !l.currentMRC);
 
       return typeMatch && stateMatch && unworkedMatch;
     });
@@ -1667,7 +1771,8 @@ async function bulkAssignToSelectedAgent() {
   const qty = parseInt(document.getElementById("bulk-agent-qty").value, 10);
   const selectedType = document.getElementById("bulk-type-select").value;
   const selectedState = document.getElementById("bulk-state-select").value;
-
+  const unworkedElement = document.getElementById("bulk-unworked-check");
+  const requireUnworked = unworkedElement ? unworkedElement.checked : false;
   if (!agentName) {
     UI.showToast("Please select an agent first.", "warning");
     return;
@@ -1683,13 +1788,21 @@ async function bulkAssignToSelectedAgent() {
 
     const isAvailable =
       !l.assignedTo && !Config.terminalStatuses.includes(l.status);
+
     const matchesType =
       selectedType === "all" ||
       (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
+
     const matchesState =
       selectedState === "all" ||
       (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
-    const matchesUnworked = !requireUnworked || (!l.previousAgents && !l.mrc);
+
+    // THE FIX: Use the actual Status to determine if it's unworked,
+    // and safely check previousAgents so it doesn't crash on undefined strings!
+    const isFresh =
+      l.status === "New" &&
+      (!l.previousAgents || l.previousAgents.trim() === "");
+    const matchesUnworked = !requireUnworked || isFresh;
 
     return (
       isValidLead &&
@@ -3199,15 +3312,32 @@ function escHtml(str) {
 const UI = {
   showToast: function (msg, type) {
     type = type || "info";
-    const c = document.getElementById("toast-container");
-    if (!c) return;
+
+    let c = document.getElementById("toast-container");
+
+    if (!c) {
+      c = document.createElement("div");
+      c.id = "toast-container";
+
+      // THE FIX: Nuke the z-index to a billion, and ensure absolute highest priority
+      c.style.cssText =
+        "position: fixed !important; bottom: 20px !important; right: 20px !important; z-index: 2147483647 !important; display: flex !important; flex-direction: column !important; gap: 10px !important; pointer-events: none !important;";
+
+      // THE FIX: Attach it directly to the HTML document element, bypassing the body entirely
+      document.documentElement.appendChild(c);
+    }
+
     const t = document.createElement("div");
     t.className = "toast toast-" + type;
     t.textContent = msg;
+    t.style.pointerEvents = "auto";
+
     c.appendChild(t);
+
     setTimeout(function () {
       t.classList.add("show");
     }, 10);
+
     setTimeout(function () {
       t.classList.remove("show");
       setTimeout(function () {
