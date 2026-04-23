@@ -1,5 +1,7 @@
 // Raimak LMS - App Logic v3.0
-
+window._isWorkingCallback = false;
+const cachedSkips = sessionStorage.getItem("_skippedSessionLeads");
+window._skippedSessionLeads = cachedSkips ? JSON.parse(cachedSkips) : [];
 const State = {
   leads: [],
   contractors: [],
@@ -226,6 +228,9 @@ function navigate(view) {
       break;
     case "myleads":
       renderMyLeads();
+      break;
+    case "callbacks":
+      renderCallBacks();
       break;
     case "drip":
       renderDripFeed();
@@ -875,8 +880,68 @@ function renderMyLeads() {
       // Bouncer 2: Is it in cool-off?
       const inCoolOff = Graph.isInCoolOff(l);
 
-      // ONLY keep actionable, unworked leads in the deck!
-      return matchesAgent && !isTerminal && !inCoolOff;
+      // Bouncer 3: The Callback & Install Check
+      let waitingForDate = false;
+      let isDueCallback = false;
+
+      if (l.callbackAt) {
+        // Strip time to compare pure calendar days for BOTH rules
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const scheduledDate = new Date(l.callbackAt);
+        scheduledDate.setHours(0, 0, 0, 0);
+
+        if (l.status === "Pending Order") {
+          // INSTALL RULE: Keep hidden on the day of the install.
+          if (today <= scheduledDate) waitingForDate = true;
+        } else {
+          // CALLBACK RULE: Calendar Day Checking!
+          // Keep it hidden ONLY if the scheduled date is tomorrow or later.
+          // This ensures a 4:30 PM callback is visible immediately at 8:00 AM.
+          if (today < scheduledDate) waitingForDate = true;
+        }
+
+        // If it's today (or overdue), they get the VIP pass to bypass cool-off!
+        if (!waitingForDate) {
+          isDueCallback = true;
+        }
+      }
+
+      // THE ULTIMATE DECISION:
+      // If it's a due callback, it gets a VIP Pass to bypass the cool-off restriction!
+      const passedCoolOff = isDueCallback ? true : !inCoolOff;
+      const isDismissed =
+        window._skippedSessionLeads &&
+        window._skippedSessionLeads.includes(l.id);
+      // ONLY keep actionable, unworked leads that have passed their waiting period!
+      return (
+        matchesAgent &&
+        !isTerminal &&
+        passedCoolOff &&
+        !waitingForDate &&
+        !isDismissed
+      );
+    });
+
+    // ==========================================
+    //  THE SORT: FORCE CALLBACKS TO THE TOP
+    // ==========================================
+    myLeads.sort((a, b) => {
+      const aHasCallback = !!a.callbackAt;
+      const bHasCallback = !!b.callbackAt;
+
+      // Rule 1: Callbacks always rise above standard leads
+      if (aHasCallback && !bHasCallback) return -1;
+      if (!aHasCallback && bHasCallback) return 1;
+
+      // Rule 2: If BOTH are callbacks, sort by exact time (earliest calls first)
+      if (aHasCallback && bHasCallback) {
+        return new Date(a.callbackAt) - new Date(b.callbackAt);
+      }
+
+      // Rule 3: Leave standard leads alone
+      return 0;
     });
   }
 
@@ -1084,7 +1149,7 @@ function renderLeadFeedCard(myLeads) {
   const isCoolOff = lead ? Graph.isInCoolOff(lead) : false;
 
   _stagedStatus = null;
-
+  window._forceShowLead = false;
   // 2. Setup Template
   const template = document.getElementById("tmpl-lead-feed-card");
   const clone = template.content.cloneNode(true);
@@ -1100,7 +1165,6 @@ function renderLeadFeedCard(myLeads) {
         ? "Remaining leads are in the cool-off period."
         : "No leads assigned yet — ask your manager.";
 
-    // We create a wrapper div to hold the clone and return it
     const wrapper = document.createElement("div");
     wrapper.appendChild(clone);
     return wrapper;
@@ -1134,6 +1198,37 @@ function renderLeadFeedCard(myLeads) {
     alert.textContent = `⏱ This lead is in the ${Config.rules.coolOffDays}-day cool-off period — you can still update it if the customer reached out.`;
   }
 
+  // ==========================================
+  // NEW: 1. THE CALLBACK / INSTALL ALERT BADGE
+  // ==========================================
+  const callbackAlert = clone.getElementById("feed-callback-alert");
+  if (callbackAlert && lead.callbackAt) {
+    const targetDate = new Date(lead.callbackAt);
+    const today = new Date();
+
+    // Create midnight versions for pure day comparison
+    const todayMidnight = new Date(today);
+    todayMidnight.setHours(0, 0, 0, 0);
+    const targetMidnight = new Date(targetDate);
+    targetMidnight.setHours(0, 0, 0, 0);
+
+    if (todayMidnight >= targetMidnight) {
+      // Format time like "2:30 PM"
+      const timeString = targetDate.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      if (lead.status === "Pending Order") {
+        callbackAlert.innerHTML =
+          "📅 INSTALL DUE: Check if fiber is active today!";
+      } else {
+        callbackAlert.innerHTML = `📅 ACTION REQUIRED: Scheduled follow-up today at ${timeString}`;
+      }
+      callbackAlert.style.display = "block";
+    }
+  }
+
   // Meta Row (Icons)
   let metaHtml = "";
   if (lead.phone)
@@ -1149,6 +1244,101 @@ function renderLeadFeedCard(myLeads) {
   clone.getElementById("feed-mrc").value = lead.currentMRC || "";
   clone.getElementById("feed-cbr").value = lead.cbr || "";
 
+  // ==========================================
+  // NEW: 2. PULLING THE SAVED CALLBACK DATE UI
+  // ==========================================
+  const callbackInput = clone.getElementById("f-callback-date");
+  const callbackWrap = clone.getElementById("callback-wrapper");
+  const callbackBtn = clone.getElementById("btn-toggle-callback");
+  const callbackLabel = clone.getElementById("callback-label");
+
+  if (callbackInput && lead.callbackAt) {
+    // SharePoint gives us ISO strings (UTC). HTML datetime-local needs YYYY-MM-DDThh:mm in local time.
+    const localDate = new Date(lead.callbackAt);
+    const tzOffset = localDate.getTimezoneOffset() * 60000;
+    const localISOTime = new Date(localDate - tzOffset)
+      .toISOString()
+      .slice(0, 16);
+
+    callbackInput.value = localISOTime;
+
+    // Slide the menu open so the agent sees the date is set
+    if (callbackWrap) {
+      callbackWrap.style.width = "200px";
+      callbackWrap.style.opacity = "1";
+      callbackWrap.style.overflow = "visible";
+      callbackWrap.dataset.manuallyOpened = "false";
+    }
+
+    // If it's a pending order, apply the visual lockdown
+    if (lead.status === "Pending Order" && callbackBtn) {
+      if (callbackLabel)
+        callbackLabel.innerHTML =
+          'Scheduled Install <span style="color: var(--red)">*</span>';
+      callbackBtn.disabled = true;
+      callbackBtn.style.opacity = "0.4";
+      callbackBtn.style.cursor = "not-allowed";
+      callbackInput.required = true;
+    }
+  }
+
+  if (callbackInput) {
+    callbackInput.addEventListener("change", (e) => {
+      const selectedVal = e.target.value;
+
+      if (callbackWrap) {
+        callbackWrap.dataset.manuallyOpened = "true";
+      }
+
+      if (selectedVal) {
+        // 1. The Green Flash on the input box
+        callbackInput.style.transition =
+          "background-color 0.3s, border-color 0.3s";
+        callbackInput.style.backgroundColor = "var(--green-dim, #e6f8f3)";
+        callbackInput.style.borderColor = "var(--green, #10b981)";
+
+        setTimeout(() => {
+          callbackInput.style.backgroundColor = ""; // Fade out background, leave the border
+        }, 600);
+
+        // 2. Only apply the cooldown and label change if it's NOT a Pending Order
+        if (lead.status !== "Pending Order" && callbackBtn) {
+          // Update the label to the "Aha!" state
+          if (callbackLabel) {
+            const d = new Date(selectedVal);
+            const formattedStr =
+              d.toLocaleDateString([], { month: "short", day: "numeric" }) +
+              " @ " +
+              d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            callbackLabel.innerHTML = `✅ Set: ${formattedStr}`;
+            callbackLabel.style.color = "var(--green, #10b981)";
+          }
+
+          // Gray it out to prevent the instant double-click
+          callbackBtn.disabled = true;
+          callbackBtn.style.opacity = "0.4";
+          callbackBtn.style.cursor = "not-allowed";
+
+          // Bring it back to life after 2 seconds
+          setTimeout(() => {
+            // Double check it wasn't miraculously changed to a pending order in the last 2 seconds
+            if (lead.status !== "Pending Order") {
+              callbackBtn.disabled = false;
+              callbackBtn.style.opacity = "1";
+              callbackBtn.style.cursor = "pointer";
+            }
+          }, 2000);
+        }
+      } else {
+        // 3. THE MISSING ELSE BLOCK (If they manually clear the input box)
+        callbackInput.style.borderColor = "";
+        if (callbackLabel) {
+          callbackLabel.innerHTML = "Callback date and time";
+          callbackLabel.style.color = "#6b85b0";
+        }
+      }
+    });
+  }
   // Products Dropdown
   const productsSelect = clone.getElementById("feed-products");
   Config.currentProducts.forEach((p) => {
@@ -1165,11 +1355,10 @@ function renderLeadFeedCard(myLeads) {
     const option = document.createElement("option");
     option.value = c.name;
     option.textContent = c.name;
-    // You can add logic here to auto-select if needed!
     soldBySelect.appendChild(option);
   });
 
-  // THE DRAFT PEEK: Check for a saved AutoPay draft to use in the HTML generation
+  // THE DRAFT PEEK
   const draft = State.drafts[lead.id] || {};
   const activeAutoPay =
     draft.autoPay !== undefined ? draft.autoPay : lead.autoPay;
@@ -1196,8 +1385,6 @@ function renderLeadFeedCard(myLeads) {
           .toLowerCase()
           .replace(/\s+/g, "-")
           .replace(/[^a-z0-9-]/g, "");
-
-      // We use innerHTML here purely for brevity of building buttons, it's safe enough!
       statusContainer.innerHTML += `<button class="status-btn ${cls}" id="sbtn-${s.replace(/\s+/g, "-")}" onclick="stageStatus('${lead.id}','${s}')">${s}${isTDM}</button>`;
     });
 
@@ -1212,19 +1399,15 @@ function renderLeadFeedCard(myLeads) {
   const pastNotesContainer = clone.getElementById("feed-past-notes-container");
   if (lead.notes && lead.notes.trim()) {
     pastNotesContainer.style.display = "block"; // Unhide the box
-
     const notesHtml = lead.notes
       .split("\n")
-      .filter((l) => l.trim()) // Remove empty lines
+      .filter((l) => l.trim())
       .map((line) => {
-        // Look for the [MM/DD/YY - Agent Name] pattern
         const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
-
         if (match) {
           const date = match[1];
           const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
           const text = match[3];
-
           return `
             <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
               <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
@@ -1234,8 +1417,6 @@ function renderLeadFeedCard(myLeads) {
               <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
             </div>`;
         }
-
-        // Fallback if the note doesn't match the standard format
         return `
           <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
             <div style="margin-bottom:3px">
@@ -1245,16 +1426,13 @@ function renderLeadFeedCard(myLeads) {
           </div>`;
       })
       .join("");
-
     pastNotesContainer.innerHTML = notesHtml;
   }
 
   // Save Button Action
   clone.getElementById("feed-save-btn").onclick = () => agentSaveAll(lead.id);
 
-  // -----------------------------------------
   // THE DRAFT MEMORY ENABLER
-  // -----------------------------------------
   const inputsToDraft = [
     { id: "feed-btn", key: "btn" },
     { id: "feed-mrc", key: "mrc" },
@@ -1292,6 +1470,94 @@ function renderLeadFeedCard(myLeads) {
   return wrapper;
 }
 
+function toggleCallbackDate() {
+  const wrap = document.getElementById("callback-wrapper");
+  const btn = document.getElementById("btn-toggle-callback");
+  const input = document.getElementById("f-callback-date");
+  const label = document.getElementById("callback-label");
+
+  // Prevent toggling if it's locked (like for Pending Orders or during our 2-second cooldown!)
+  if (btn.disabled) return;
+
+  if (wrap.style.width === "0px" || wrap.style.width === "") {
+    // Slide & Fade IN
+    wrap.style.width = "200px";
+    wrap.style.opacity = "1";
+
+    // THE MEMORY: Remember that the agent specifically asked for this to be open
+    wrap.dataset.manuallyOpened = "true";
+
+    setTimeout(() => {
+      wrap.style.overflow = "visible";
+    }, 300);
+  } else {
+    // Slide & Fade OUT
+    wrap.style.width = "0px";
+    wrap.style.opacity = "0";
+    wrap.style.overflow = "hidden";
+
+    // THE MEMORY: Remember that the agent closed it
+    wrap.dataset.manuallyOpened = "false";
+
+    // Scrub the data and reset the UI *after* the menu finishes sliding shut
+    setTimeout(() => {
+      if (input) {
+        input.value = "";
+        input.style.borderColor = "";
+        input.style.backgroundColor = "";
+      }
+
+      // Reset the label ONLY if it's our dynamic "✅ Set:" text
+      if (label && label.innerHTML.includes("✅ Set:")) {
+        label.innerHTML = "Callback date and time"; // <-- Updated to match template!
+        label.style.color = "#6b85b0";
+      }
+    }, 300);
+  }
+}
+
+function updateCallbackUIForStatus(status) {
+  const wrap = document.getElementById("callback-wrapper");
+  const label = document.getElementById("callback-label");
+  const btn = document.getElementById("btn-toggle-callback");
+  const dateInput = document.getElementById("f-callback-date");
+
+  if (!wrap || !label || !btn || !dateInput) return;
+
+  if (status === "Pending Order") {
+    // Force the menu open instantly and lock the button
+    wrap.style.width = "200px";
+    wrap.style.opacity = "1";
+    wrap.style.overflow = "visible";
+
+    label.innerHTML =
+      'Scheduled Install <span style="color: var(--red)">*</span>';
+    btn.disabled = true;
+    btn.style.opacity = "0.4";
+    btn.style.cursor = "not-allowed";
+    dateInput.required = true;
+  } else {
+    // Return everything to normal callback mode
+    label.textContent = "Callback date and time";
+    btn.disabled = false;
+    btn.style.opacity = "1";
+    btn.style.cursor = "pointer";
+    dateInput.required = false;
+
+    // THE FIX: Check the memory! If they didn't manually open it before, slide it shut.
+    if (wrap.dataset.manuallyOpened !== "true") {
+      wrap.style.width = "0px";
+      wrap.style.opacity = "0";
+      wrap.style.overflow = "hidden";
+
+      // Wait for the slide animation to finish before clearing the data
+      setTimeout(() => {
+        if (wrap.style.width === "0px") dateInput.value = "";
+      }, 300);
+    }
+  }
+}
+
 function stageStatus(leadId, newStatus) {
   const lead = State.leads.find(function (l) {
     return l.id === leadId;
@@ -1308,7 +1574,7 @@ function stageStatus(leadId, newStatus) {
   }
 
   _stagedStatus = newStatus;
-
+  updateCallbackUIForStatus(newStatus);
   document.querySelectorAll(".status-btn").forEach(function (btn) {
     btn.style.borderColor = "";
     btn.style.color = "";
@@ -1346,7 +1612,7 @@ async function agentSaveAll(leadId) {
 
   const newStatus = _stagedStatus || lead.status;
 
-  // Kept your exact original IDs!
+  // Your original edit modal IDs - untouched!
   const mrc = (document.getElementById("feed-mrc") || {}).value || "";
   const products = (document.getElementById("feed-products") || {}).value || "";
   const newNote = (document.getElementById("feed-notes") || {}).value || "";
@@ -1359,8 +1625,25 @@ async function agentSaveAll(leadId) {
   const soldByEl = document.getElementById("feed-sold-by");
   const soldByName = soldByEl ? soldByEl.value : "";
 
-  // NEW: Grab the universal callback date from the UI
-  //const rawCallbackDate = (document.getElementById("f-callback-date") || {}).value || "";
+  // NEW: Grab the universal callback date from the sliding toggle UI
+  let rawCallbackDate =
+    (document.getElementById("f-callback-date") || {}).value || "";
+
+  // ==========================================
+  // THE INTERCEPT: Prevent Phantom Callbacks
+  // ==========================================
+  if (window._isWorkingCallback) {
+    const wrap = document.getElementById("callback-wrapper");
+    console.log("🕵️‍♂️ DEBUGGING INTERCEPT:", {
+      rawDate: rawCallbackDate,
+      isWorkingCallback: window._isWorkingCallback,
+      manuallyOpened: wrap ? wrap.dataset.manuallyOpened : "NO WRAPPER FOUND",
+    });
+    // If they didn't actively schedule a NEW time, scrub the old time out of the variable!
+    if (!wrap || wrap.dataset.manuallyOpened !== "true") {
+      rawCallbackDate = "";
+    }
+  }
 
   // Validation
   if (!autoPay) {
@@ -1405,6 +1688,7 @@ async function agentSaveAll(leadId) {
   // Setup Payload
   const todayDate = new Date().toISOString().split("T")[0];
   const saveFields = { Status: newStatus, LastTouchedOn: todayDate };
+
   if (mrc) saveFields["MonthlyRecurringCharge_x0028_MRC"] = mrc;
   if (products) saveFields["CurrentProducts"] = products;
   if (cbr) saveFields["CBR"] = cbr;
@@ -1412,13 +1696,15 @@ async function agentSaveAll(leadId) {
   if (notes) saveFields["Notes"] = notes;
   if (autoPay) saveFields["AutoPay"] = autoPay;
 
-  // NEW: Format the callback date for SharePoint
-  /**if (rawCallbackDate) {
+  // THE MAGIC: Format the callback date for SharePoint
+  if (rawCallbackDate) {
+    // Converts the HTML datetime picker into the exact ISO string SharePoint demands
     saveFields["CallbackDateTime"] = new Date(rawCallbackDate).toISOString();
-  } else if (newStatus !== "Pending Order" && newStatus !== "Callback") {
-    // Clear it out of the database if they change the status to something else
-    saveFields["CallbackDateTime"] = null; 
-  }**/
+  } else if (newStatus !== "Pending Order") {
+    // Because "Callback" isn't a status, if there is no date, WIPE IT!
+    // (We only spare it if it's a Pending Order, to protect the install date)
+    saveFields["CallbackDateTime"] = null;
+  }
 
   setLoading(true);
   try {
@@ -1447,6 +1733,7 @@ async function agentSaveAll(leadId) {
       networkTasks.push(Graph.assignAgent(leadId, ""));
     }
 
+    // Wait for all network calls to finish simultaneously
     await Promise.all(networkTasks);
 
     State.activityLog.push({
@@ -1458,7 +1745,7 @@ async function agentSaveAll(leadId) {
     delete State.drafts[leadId];
 
     // --- THE OPTIMISTIC UI UPDATE ---
-    // Update local memory so ghost leads vanish instantly and cached loads are accurate
+    // Instantly inject new data into local memory so the Bouncer & Search act immediately
     lead.status = newStatus;
     lead.notes = notes;
     if (mrc) lead.mrc = mrc;
@@ -1468,8 +1755,8 @@ async function agentSaveAll(leadId) {
     if (autoPay) lead.autoPay = autoPay;
     if (newStatus === "TDM") lead.assignedTo = "";
 
-    // Crucial for the Bouncer: give the local lead the raw date string so the math works
-    //lead.callbackDate = rawCallbackDate || null;
+    // Crucial for the Bouncer: update the local callback string!
+    lead.callbackAt = rawCallbackDate || null;
     // --------------------------------
 
     if (newStatus === "TDM") {
@@ -1479,6 +1766,7 @@ async function agentSaveAll(leadId) {
       if (window.UI && UI.showToast) UI.showToast("Saved!", "success");
     }
 
+    // This updates the UI and immediately hides the lead if it's on cool-off
     Ticker.update();
     _stagedStatus = null;
     _leadSaved = true;
@@ -1487,7 +1775,21 @@ async function agentSaveAll(leadId) {
     const searchSec = document.getElementById("lead-search-section");
     const saveBtn = document.getElementById("feed-save-btn");
 
-    if (nextRow) nextRow.style.display = "block";
+    if (nextRow) {
+      nextRow.style.display = "block";
+      const nextBtn = nextRow.querySelector("button");
+
+      if (nextBtn && window._isWorkingCallback) {
+        window._isWorkingCallback = false;
+        window._forceShowLead = false;
+        nextBtn.innerHTML = "Complete Callback ✓";
+        nextBtn.classList.remove("btn-cyan");
+        nextBtn.classList.add("btn-green");
+
+        // 2. Point the click action to our new completion function
+        nextBtn.onclick = () => completeCallbackLead(lead.id);
+      }
+    }
     if (searchSec) searchSec.style.display = "block";
     if (saveBtn) {
       saveBtn.textContent = "Saved ✓";
@@ -1511,11 +1813,31 @@ function advanceToNextLead() {
   const currentLead = window._myLeads[_currentFeedIndex];
 
   if (currentLead) {
+    let isDismissedCallback = false;
+
+    if (currentLead.callbackAt) {
+      // 1. Initialize the memory bank just in case
+      if (!window._skippedSessionLeads) window._skippedSessionLeads = [];
+
+      // 2. Prevent duplicates and memorize the dismiss
+      if (!window._skippedSessionLeads.includes(currentLead.id)) {
+        window._skippedSessionLeads.push(currentLead.id);
+        sessionStorage.setItem(
+          "_skippedSessionLeads",
+          JSON.stringify(window._skippedSessionLeads),
+        );
+      }
+      isDismissedCallback = true;
+    }
+
     const isTerminal = Config.terminalStatuses.includes(currentLead.status);
     const isExhausted = currentLead.status === "3rd Contact";
     const inCoolOff = Graph.isInCoolOff(currentLead);
 
-    if (!isTerminal && !isExhausted && !inCoolOff) {
+    // 3. Only increment the index if the lead is staying in the active queue!
+    // If it's terminal, exhausted, cool-off, OR a dismissed callback,
+    // the Bouncer will remove it during renderMyLeads(), naturally sliding the next lead into this slot.
+    if (!isTerminal && !isExhausted && !inCoolOff && !isDismissedCallback) {
       _currentFeedIndex++;
     }
   }
@@ -1989,6 +2311,236 @@ async function bulkAssignByQuantity() {
   }
 }
 
+// ============================================================
+// CALLBACKS
+// ============================================================
+function renderCallBacks() {
+  const mainContent = document.getElementById("main-content");
+  mainContent.innerHTML = ""; // Clear existing screen
+
+  // 1. Setup Template
+  const template = document.getElementById("tmpl-callbacks-page");
+  const clone = template.content.cloneNode(true);
+  const wrap = clone.getElementById("callbacks-list-wrap");
+
+  // 2. Identify the current agent
+  const userName = ((State.currentUser && State.currentUser.name) || "")
+    .toLowerCase()
+    .trim();
+  const userEmail = ((State.currentUser && State.currentUser.email) || "")
+    .toLowerCase()
+    .trim();
+
+  const contractor = (State.contractors || []).find((c) => {
+    return (
+      (c.email || "").toLowerCase().trim() === userEmail ||
+      (c.name || "").toLowerCase().trim() === userName
+    );
+  });
+
+  const agentName = contractor
+    ? contractor.name.toLowerCase().trim()
+    : userName;
+
+  // 3. Filter the master database
+  const callbacks = (State.leads || []).filter((l) => {
+    const assigned = (l.assignedTo || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const isAssignedToMe =
+      assigned &&
+      (assigned === agentName.replace(/\s+/g, " ") ||
+        assigned === userName.replace(/\s+/g, " ") ||
+        assigned === userEmail.replace(/\s+/g, " "));
+
+    const isTerminal =
+      l.status === "TDM" || l.status === (Config.soldStatus || "Sold");
+
+    return isAssignedToMe && !isTerminal && l.callbackAt;
+  });
+
+  // 4. Sort chronologically
+  callbacks.sort((a, b) => {
+    const dateA = new Date(a.callbackAt);
+    if (a.status === "Pending Order") dateA.setDate(dateA.getDate() + 1);
+
+    const dateB = new Date(b.callbackAt);
+    if (b.status === "Pending Order") dateB.setDate(dateB.getDate() + 1);
+
+    return dateA - dateB;
+  });
+
+  // 5. Handle the Empty State
+  if (callbacks.length === 0) {
+    // NEW: Added the animation class to the empty state so it fades in too!
+    wrap.innerHTML = `
+      <div class="animate-fade-up" style="padding: 60px 20px; text-align: center; color: #64748b;">
+        <div style="font-size: 40px; margin-bottom: 16px;">📅</div>
+        <h3 style="margin: 0 0 8px 0; color: #0a1a3f; font-size: 18px;">Pipeline Clear</h3>
+        <p style="margin: 0; font-size: 14px;">You have no upcoming callbacks or installations scheduled.</p>
+      </div>
+    `;
+  } else {
+    // 6. Build the Table
+    let html = `
+      <table class="animate-fade-up" style="width: 100%; border-collapse: collapse; text-align: left;">
+        <thead>
+          <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px;">
+            <th style="padding: 14px 16px; font-weight: 600;">Scheduled For</th>
+            <th style="padding: 14px 16px; font-weight: 600;">Customer Info</th>
+            <th style="padding: 14px 16px; font-weight: 600;">Status</th>
+            <th style="padding: 14px 16px; font-weight: 600; text-align: right;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // NEW: Added the 'index' parameter to the loop so we can multiply it for the staggered delay
+    callbacks.forEach((l, index) => {
+      // 1. Calculate the actual Action Date
+      const actionDate = new Date(l.callbackAt);
+      const isInstall = l.status === "Pending Order";
+
+      if (isInstall) {
+        // Push the required action to the day AFTER the install
+        actionDate.setDate(actionDate.getDate() + 1);
+      }
+
+      const actionMidnight = new Date(actionDate);
+      actionMidnight.setHours(0, 0, 0, 0);
+
+      let dateColor = "#1e293b";
+      let dateWeight = "normal";
+      let badge = "";
+
+      // 2. Check the new action date against Today
+      if (actionMidnight < today) {
+        dateColor = "var(--red, #ef4444)";
+        dateWeight = "bold";
+        badge = `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">OVERDUE</span>`;
+      } else if (actionMidnight.getTime() === today.getTime()) {
+        dateColor = "var(--blue, #2563B0)";
+        dateWeight = "bold";
+        badge = `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">TODAY</span>`;
+      }
+
+      // 3. Format the strings for the UI
+      const dateStr = actionDate.toLocaleDateString([], {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+      const timeStr = actionDate.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      // ---> THE UI TOUCH SNIPPET <---
+      // Give the agent clear context on the original install date
+      const typeStr = isInstall
+        ? `Install Check (Installed ${new Date(l.callbackAt).toLocaleDateString([], { month: "short", day: "numeric" })})`
+        : "Scheduled Call";
+
+      const statusCls = `status-${(l.status || "")
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "")}`;
+
+      // NEW: Added the animate-fade-up class and the dynamic staggered delay using the index
+      html += `
+        <tr class="animate-row-fade" style="border-bottom: 1px solid #f1f5f9; transition: background 0.2s; animation-delay: ${index * 0.05 + 0.1}s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='white'">
+          <td style="padding: 16px; font-size: 13px; color: ${dateColor}; font-weight: ${dateWeight};">
+            <div style="display: flex; align-items: center; font-size: 14px;">${dateStr} @ ${timeStr} ${badge}</div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 4px; font-weight: normal; text-transform: uppercase;">${typeStr}</div>
+          </td>
+          <td style="padding: 16px;">
+            <div style="font-size: 14px; font-weight: 600; color: #0a1a3f;">${escHtml(l.name || "Unknown")}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 2px;">📞 ${escHtml(l.cbr || "No Phone Number")}</div>
+          </td>
+          <td style="padding: 16px;">
+            <span class="status-badge ${statusCls}">${l.status}</span>
+          </td>
+          <td style="padding: 16px; text-align: right; white-space: nowrap;">
+            <button class="btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 8px;" onclick="viewCallbackLead('${l.id}')">
+              View Callback
+            </button>
+            <button class="btn-primary" style="font-size: 12px; padding: 6px 12px;" onclick="workCallbackLead('${l.id}')">
+              Work Callback
+            </button>
+          </td>
+          </td>
+        </tr>
+      `;
+    });
+
+    html += `</tbody></table>`;
+    wrap.innerHTML = html;
+  }
+
+  // 7. Return the fully built DOM element for your router to mount!
+  mainContent.appendChild(clone);
+}
+
+function viewCallbackLead(leadId) {
+  const targetLead = State.leads.find((l) => l.id === leadId);
+  if (!targetLead) return;
+
+  const currentQueue = window._myLeads || [];
+  const filteredQueue = currentQueue.filter((l) => l.id !== leadId);
+  window._myLeads = [targetLead, ...filteredQueue];
+
+  window._forceShowLead = true;
+  window._currentFeedIndex = 0;
+
+  // NEW: Make sure the app knows we are just viewing
+  window._isWorkingCallback = false;
+
+  navigate("myleads");
+}
+
+function workCallbackLead(leadId) {
+  const targetLead = State.leads.find((l) => l.id === leadId);
+  if (!targetLead) return;
+  const currentQueue = window._myLeads || [];
+  const filteredQueue = currentQueue.filter((l) => l.id !== leadId);
+  window._myLeads = [targetLead, ...filteredQueue];
+
+  window._forceShowLead = true;
+  window._currentFeedIndex = 0;
+
+  // NEW: Tell the app to intercept the "Next Lead" button
+  window._isWorkingCallback = true;
+
+  navigate("myleads");
+}
+
+function completeCallbackLead(leadId) {
+  const targetLead = State.leads.find((l) => l.id === leadId);
+
+  if (targetLead) {
+    // 1. NOW we wipe the date since the interaction is over
+    targetLead.callbackAt = null;
+
+    // 2. Secretly update SharePoint in the background
+    if (window.Graph && Graph.updateLead) {
+      Graph.updateLead(leadId, { CallbackDateTime: null }).catch((err) =>
+        console.error("Failed to clear callback", err),
+      );
+    }
+  }
+
+  // 3. Reset all our bypass flags so the Bouncer wakes back up
+  window._isWorkingCallback = false;
+  window._forceShowLead = false;
+
+  // 4. Send them back to their pipeline
+  navigate("callbacks");
+}
 // ============================================================
 //  LEADS VIEW (Admin only)
 // ============================================================

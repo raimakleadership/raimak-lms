@@ -34,10 +34,12 @@
   --cyan: #00e5ff;
   --cyan-dim: rgba(0, 212, 255, 0.1);
   --cyan-glow: rgba(0, 212, 255, 0.25);
+  --cyan-bg: rgba(0, 217, 255, 0.103);
 
   /* Status colours */
   --green: #00ff88;
   --green-dim: rgba(16, 240, 128, 0.1);
+  --green-glow: rgba(16, 240, 128, 0.25);
   --red: #ff4757;
   --red-dim: rgba(255, 71, 87, 0.12);
   --amber: #ffb300;
@@ -520,7 +522,6 @@ body::before {
     0 0 0 1px #f97316;
 }
 .btn-cyan {
-  background: transparent;
   color: var(--cyan);
   font-family: var(--font-head);
   font-weight: 600;
@@ -539,6 +540,28 @@ body::before {
 .btn-cyan:hover {
   background: var(--cyan-dim);
   box-shadow: 0 0 16px var(--cyan-glow);
+}
+
+.btn-green {
+  color: var(--green);
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  padding: 9px 20px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--green);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--transition);
+  text-transform: uppercase;
+  background: transparent;
+}
+
+.btn-green:hover {
+  background: var(--green-dim);
+  box-shadow: 0 0 16px var(--green-glow);
 }
 
 .btn-ghost {
@@ -1972,6 +1995,22 @@ body::before {
 }
 
 /* ── Animations ─────────────────────────────────────────────── */
+.animate-fade-up {
+  animation: fadeUp 0.3s ease both;
+}
+
+.animate-row-fade {
+  animation: fadeRow 0.3s ease both;
+}
+
+@keyframes fadeRow {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 @keyframes fadeUp {
   from {
     opacity: 0;

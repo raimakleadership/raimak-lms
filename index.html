@@ -100,7 +100,47 @@
             </svg>
             My Leads
           </a>
-          <a
+          <a class="nav-item" data-view="callbacks" onclick="navigate('callbacks')">
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
+              <rect
+                x="3"
+                y="4"
+                width="18"
+                height="18"
+                rx="2"
+                stroke="currentColor"
+                stroke-width="2"
+              />
+              <line
+                x1="16"
+                y1="2"
+                x2="16"
+                y2="6"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <line
+                x1="8"
+                y1="2"
+                x2="8"
+                y2="6"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+              <line
+                x1="3"
+                y1="10"
+                x2="21"
+                y2="10"
+                stroke="currentColor"
+                stroke-width="2"
+              />
+            </svg>
+            Callbacks
+          </a>
+          <!-- <a
             class="nav-item admin-only"
             data-view="drip"
             onclick="navigate('drip')"
@@ -112,7 +152,7 @@
               />
             </svg>
             Drip Feed
-          </a>
+          </a> -->
           <a
             class="nav-item admin-only"
             data-view="assign"
@@ -512,6 +552,22 @@
       </div>
     </template>
 
+    <template id="tmpl-callbacks-page">
+      <section class="dashboard-section" style="padding: 20px;">
+        
+        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px;">
+          <div>
+            <h2 style="margin: 0; color: #0a1a3f; font-size: 24px;">Scheduled Pipeline</h2>
+            <p style="margin: 4px 0 0 0; color: #64748b; font-size: 14px;">Manage your upcoming callbacks and pending installations.</p>
+          </div>
+        </div>
+
+        <div id="callbacks-list-wrap" style="background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden;">
+          </div>
+
+      </section>
+    </template>
+    
     <template id="tmpl-my-leads">
       <div class="view-header">
         <div>
@@ -735,7 +791,23 @@
         </div>
 
         <div class="feed-name" id="feed-lead-name"></div>
-
+        <div
+          id="feed-callback-alert"
+          style="
+            display: none;
+            background: #e0f2fe; /* Light blue */
+            border: 1px solid #38bdf8;
+            border-radius: 6px;
+            padding: 8px 14px;
+            margin-bottom: 12px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: #0369a1;
+            font-weight: bold;
+          "
+        >
+          📅 ACTION REQUIRED: Scheduled follow-up or install check for today!
+        </div>
         <div
           id="feed-cooloff-alert"
           style="
@@ -792,22 +864,31 @@
           </div>
         </div>
 
-        <div style="margin-bottom: 16px">
-          <div
-            style="
-              font-family: var(--font-mono);
-              font-size: 10px;
-              color: #6b85b0;
-              margin-bottom: 8px;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-            "
-          >
-            Sold By <span style="color: var(--red)">* Required</span>
+        <div style="display: flex; gap: 16px; margin-bottom: 16px; align-items: flex-end;">
+          
+          <div style="flex: 1;">
+            <div style="font-family: var(--font-mono); font-size: 10px; color: #6b85b0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">
+              Sold By <span style="color: var(--red)">* Required</span>
+            </div>
+            <select id="feed-sold-by" class="form-input" style="width: 100%;">
+              <option value="">Select agent who made the sale...</option>
+            </select>
           </div>
-          <select id="feed-sold-by" class="form-input" style="max-width: 300px">
-            <option value="">Select agent who made the sale...</option>
-          </select>
+
+        <div style="display: flex; justify-content: flex-end; align-items: flex-end; gap: 12px; flex: 1.5;">
+            
+            <div id="callback-wrapper" style="width: 0px; opacity: 0; overflow: hidden; transition: all 0.3s ease-in-out; white-space: nowrap;">
+              <div id="callback-label" style="font-family: var(--font-mono); font-size: 10px; color: #6b85b0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">
+                Callback date and time
+              </div>
+              <input type="datetime-local" id="f-callback-date" class="form-input" style="width: 100%; box-sizing: border-box;">
+            </div>
+
+            <button id="btn-toggle-callback" class="btn-secondary" type="button" onclick="toggleCallbackDate()" style="display: flex; align-items: center; justify-content: center; height: 38px; padding: 0 16px; font-size: 12px; font-weight: 600; white-space: nowrap; transition: opacity 0.2s;">
+              ⏱ SETUP CALLBACK
+            </button>
+
+          </div>
         </div>
 
         <div style="margin-bottom: 16px">
