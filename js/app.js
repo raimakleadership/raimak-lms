@@ -1634,11 +1634,6 @@ async function agentSaveAll(leadId) {
   // ==========================================
   if (window._isWorkingCallback) {
     const wrap = document.getElementById("callback-wrapper");
-    console.log("🕵️‍♂️ DEBUGGING INTERCEPT:", {
-      rawDate: rawCallbackDate,
-      isWorkingCallback: window._isWorkingCallback,
-      manuallyOpened: wrap ? wrap.dataset.manuallyOpened : "NO WRAPPER FOUND",
-    });
     // If they didn't actively schedule a NEW time, scrub the old time out of the variable!
     if (!wrap || wrap.dataset.manuallyOpened !== "true") {
       rawCallbackDate = "";
@@ -1748,8 +1743,15 @@ async function agentSaveAll(leadId) {
     // Instantly inject new data into local memory so the Bouncer & Search act immediately
     lead.status = newStatus;
     lead.notes = notes;
-    if (mrc) lead.mrc = mrc;
-    if (products) lead.products = products;
+    console.log(lead);
+    console.log(
+      "MRC and Products to inject into the local state:" +
+        mrc +
+        ", " +
+        products,
+    );
+    if (mrc) lead.currentMRC = mrc;
+    if (products) lead.currentProducts = products;
     if (cbr) lead.cbr = cbr;
     if (btn) lead.btn = btn;
     if (autoPay) lead.autoPay = autoPay;
