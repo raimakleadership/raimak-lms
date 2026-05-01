@@ -1379,8 +1379,10 @@ function renderLeadFeedCard(myLeads) {
 
   // Status Buttons
   const statusContainer = clone.getElementById("feed-status-buttons");
+  const hiddenStatuses = ["New", "TD Non-Reg", "D2D Lead"];
+
   Config.leadStatuses
-    .filter((s) => s !== "New")
+    .filter((s) => !hiddenStatuses.includes(s))
     .forEach((s) => {
       const isTDM = s === "TDM" ? " ↩" : "";
       const cls =
@@ -1646,16 +1648,31 @@ async function agentSaveAll(leadId) {
 
   // Validation
   if (!autoPay) {
-    if (window.UI && UI.showToast)
-      UI.showToast("Please select an AutoPay option before saving.", "error");
+    UI.showToast("Please select an AutoPay option before saving.", "error");
     return;
   }
   if (newStatus === Config.soldStatus && !soldByName) {
-    if (window.UI && UI.showToast)
-      UI.showToast(
-        "Please select who made this sale in the Sold By field.",
-        "error",
-      );
+    UI.showToast(
+      "Please select who made this sale in the Sold By field.",
+      "error",
+    );
+    return;
+  }
+
+  if (!mrc || mrc.trim() === "") {
+    UI.showToast("Please enter an MRC amount.", "error");
+    return;
+  }
+
+  const cleanBtn = btn.replace(/\D/g, "");
+  if (cleanBtn.length !== 10) {
+    UI.showToast("Please enter a valid 10-digit BTN.", "error");
+    return;
+  }
+
+  const cleanCbr = cbr.replace(/\D/g, "");
+  if (cleanCbr.length !== 10) {
+    UI.showToast("Please enter a valid 10-digit CBR.", "error");
     return;
   }
 
@@ -4098,20 +4115,19 @@ function updateBadges() {
   }
 }
 
-function exportD2DLeads() {
+async function exportD2DLeads() {
   // Set up our diagnostic counters
   let workedBy1 = 0;
   let workedBy2 = 0;
   let workedBy3Plus = 0;
 
-  // 1. Filter the master list by parsing the comma-separated string
+  // 1. Filter the master list
   const d2dLeads = (State.leads || []).filter((l) => {
     let count = 0;
 
     if (Array.isArray(l.previousAgents)) {
       count = l.previousAgents.length;
     } else if (typeof l.previousAgents === "string") {
-      // Split by comma, trim spaces, and count the actual names
       count = l.previousAgents
         .split(",")
         .map((a) => a.trim())
@@ -4120,15 +4136,18 @@ function exportD2DLeads() {
       count = parseInt(l.previousAgents) || 0;
     }
 
-    // Tally them up for the console log!
     if (count === 1) workedBy1++;
     else if (count === 2) workedBy2++;
     else if (count >= 3) workedBy3Plus++;
 
-    return count >= 2;
+    // 🛡️ THE NEW SAFEGUARD: Check if the lead is currently unassigned
+    // (Note: If your database uses "agent" or "assignedAgent" instead of "assignedTo", just swap the name below!)
+    const isUnassigned = !l.assignedTo || l.assignedTo.trim() === "";
+
+    // Return true ONLY if they have 2+ touches AND are currently unassigned
+    return count >= 3 && isUnassigned;
   });
 
-  // Print the final funnel math to the console
   console.log("--- D2D AGENT TOUCH COUNTS ---");
   console.log(`Leads worked by exactly 1 agent: ${workedBy1}`);
   console.log(`Leads worked by exactly 2 agents: ${workedBy2}`);
@@ -4136,8 +4155,7 @@ function exportD2DLeads() {
   console.log("------------------------------");
 
   if (d2dLeads.length === 0) {
-    if (window.UI && UI.showToast)
-      UI.showToast("No leads have 3+ previous agents yet.", "warning");
+    UI.showToast("No leads meet the criteria for D2D export.", "warning");
     return;
   }
 
@@ -4154,7 +4172,7 @@ function exportD2DLeads() {
     "currentProducts",
   ];
 
-  // 3. Map the data using your native database fields
+  // 3. Map the data
   const rows = d2dLeads.map((l) => {
     const firstName = l.firstName || "";
     const lastName = l.lastName || "";
@@ -4169,10 +4187,8 @@ function exportD2DLeads() {
     return `"${firstName}","${lastName}","${address}","${city}","${state}","${btn}","${cbr}","${mrc}","${products}"`;
   });
 
-  // 4. Build the CSV payload
+  // 4. Build & Trigger CSV Download
   const csvContent = headers.join(",") + "\n" + rows.join("\n");
-
-  // 5. Trigger the download
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -4187,11 +4203,56 @@ function exportD2DLeads() {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 
-  if (window.UI && UI.showToast)
-    UI.showToast(
-      `Exported ${d2dLeads.length} leads for Door-to-Door!`,
-      "success",
-    );
+  // 🔔 Notify the user that the file downloaded and the database is updating
+  UI.showToast(
+    `📁 File downloaded! Moving ${d2dLeads.length} leads to D2D status...`,
+    "info",
+  );
+
+  // ==========================================
+  // 🚀 5. THE GRAPH API BATCH UPDATER
+  // ==========================================
+  const host = Config.sharePoint.hostname;
+  const sitePath = Config.sharePoint.sites.team;
+  const listId = Config.sharePoint.lists.leadsList;
+  const batchUrl = `${Config.sharePoint.graphBase}/$batch`;
+
+  const batchSize = 20;
+  let updateCount = 0;
+
+  for (let i = 0; i < d2dLeads.length; i += batchSize) {
+    const chunk = d2dLeads.slice(i, i + batchSize);
+
+    const batchRequests = chunk.map((lead, index) => {
+      return {
+        id: String(index + 1),
+        method: "PATCH", // 🎯 PATCH updates an existing item without overwriting other columns
+        url: `/sites/${host}:/${sitePath}:/lists/${listId}/items/${lead.id}`, // Notice we target the specific lead.id here
+        headers: { "Content-Type": "application/json" },
+        body: {
+          fields: {
+            Status: "D2D Lead", // 🎯 The terminal status update
+          },
+        },
+      };
+    });
+
+    try {
+      await Graph.apiFetch(batchUrl, "POST", { requests: batchRequests });
+      updateCount += chunk.length;
+    } catch (error) {
+      console.error("❌ Batch update failed:", error);
+    }
+  }
+
+  // 6. Final success message and UI refresh!
+  UI.showToast(
+    `✅ Successfully locked ${updateCount} leads as D2D!`,
+    "success",
+  );
+
+  // Reloading the data applies your new filter, instantly wiping them off the screen
+  await loadAllData();
 }
 
 function updateLeadDraft(leadId, fieldName, value) {

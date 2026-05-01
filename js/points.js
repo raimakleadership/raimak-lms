@@ -38,23 +38,47 @@ const Points = {
     // Wake it up on initial load so they see their balance when they log in
     this.wakeUpHUD();
 
-    // Track the mouse globally (doesn't block clicks like an invisible div would!)
-    document.addEventListener("mousemove", (e) => {
-      // If the mouse is within the bottom 100 pixels of the screen
-      if (e.clientY > window.innerHeight - 100) {
+    // 🧠 THE BRAIN: We abstract the logic so both Mouse and Touch can use it
+    const checkPointerPosition = (clientY) => {
+      // If the pointer (mouse or finger) is within the bottom 100 pixels
+      if (clientY > window.innerHeight - 100) {
         this._isMouseNearBottom = true;
         const hud = document.getElementById("economy-hud");
         if (hud) hud.classList.remove("hud-hidden");
       } else {
         this._isMouseNearBottom = false;
 
-        // If they move the mouse away, AND the 5-second sleep timer isn't running...
+        // If they move away, AND the 5-second sleep timer isn't running...
         if (!this._hudSleepTimer) {
           const hud = document.getElementById("economy-hud");
           if (hud) hud.classList.add("hud-hidden");
         }
       }
+    };
+
+    // 🖱️ DESKTOP: Track the mouse globally
+    document.addEventListener("mousemove", (e) => {
+      checkPointerPosition(e.clientY);
     });
+
+    // 📱 MOBILE: Track when a finger first taps the screen
+    document.addEventListener(
+      "touchstart",
+      (e) => {
+        // e.touches[0] gets the coordinates of the first finger on the glass
+        checkPointerPosition(e.touches[0].clientY);
+      },
+      { passive: true },
+    );
+
+    // 📱 MOBILE: Track when a finger drags across the screen (swiping)
+    document.addEventListener(
+      "touchmove",
+      (e) => {
+        checkPointerPosition(e.touches[0].clientY);
+      },
+      { passive: true },
+    );
   },
 
   async fetchBalances() {
