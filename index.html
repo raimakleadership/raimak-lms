@@ -1014,7 +1014,7 @@
         </div>
       </div>
     </template>
-    <template id="tmpl-all-leads">
+  <template id="tmpl-all-leads">
       <div class="view-header">
         <div>
           <h1 class="view-title">All Leads</h1>
@@ -1044,6 +1044,7 @@
             </svg>
             Refresh
           </button>
+          
           <button class="btn-ghost" onclick="exportD2DLeads()">
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
               <path
@@ -1070,6 +1071,18 @@
             </svg>
             Exports Leads for D2D
           </button>
+
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="file" id="leadFileInput" accept=".csv" multiple style="display: none;" />
+            <button class="btn-ghost" id="importLeadsBtn">
+              <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <polyline points="17 8 12 3 7 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Upload Leads
+            </button>
+          </div>
           <button class="btn-primary" onclick="openAddLeadModal()">
             + Add Lead
           </button>

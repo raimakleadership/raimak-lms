@@ -2564,7 +2564,62 @@ function renderLeads() {
   clone.getElementById("leads-subtitle").textContent =
     `// ${State.leads.length} total`;
 
-  // 4. Populate Bulk Bar Dropdowns
+  // ==========================================
+  // 🚀 4. CSV IMPORTER WIRING
+  // ==========================================
+  const importBtn = clone.getElementById("importLeadsBtn");
+  const fileInput = clone.getElementById("leadFileInput");
+
+  if (importBtn && fileInput) {
+    importBtn.onclick = () => {
+      // 1. Build a temporary overlay and modal
+      const overlay = document.createElement("div");
+      overlay.style.cssText =
+        "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(13, 27, 62, 0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter: blur(3px);";
+
+      const modal = document.createElement("div");
+      // Mimicking your clean CRM styling
+      modal.style.cssText =
+        "background:#fff; padding:24px; border-radius:12px; width:320px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:16px;";
+
+      modal.innerHTML = `
+        <div>
+          <h3 style="margin:0 0 4px 0; font-size:18px; color:#0D1B3E;">Upload Leads</h3>
+          <p style="margin:0; font-size:13px; color:#666;">What type of leads are in this file?</p>
+        </div>
+        <select id="tempLeadType" class="filter-select" style="width:100%; padding:10px; border-radius:6px;">
+          <option value="OFS">OFS Leads</option>
+          <option value="MLR">MLR Leads</option>
+          <option value="Forced">Forced Leads</option>
+        </select>
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
+          <button id="cancelTypeBtn" class="btn-ghost" style="padding:8px 16px;">Cancel</button>
+          <button id="confirmTypeBtn" class="btn-primary" style="padding:8px 16px;">Choose File</button>
+        </div>
+      `;
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      // 2. Handle Modal Clicks
+      document.getElementById("cancelTypeBtn").onclick = () => overlay.remove();
+
+      document.getElementById("confirmTypeBtn").onclick = () => {
+        // Grab the choice and securely attach it to the file input's dataset
+        const selectedType = document.getElementById("tempLeadType").value;
+        fileInput.dataset.leadType = selectedType;
+
+        // Destroy the modal and open the file browser
+        overlay.remove();
+        fileInput.click();
+      };
+    };
+
+    // Attach our parser function to the hidden input
+    fileInput.addEventListener("change", handleFileSelect, false);
+  }
+
+  // 5. Populate Bulk Bar Dropdowns
   const bulkAssignSelect = clone.getElementById("bulk-assign-select");
   contractors.forEach((c) => {
     const option = document.createElement("option");
@@ -2581,7 +2636,7 @@ function renderLeads() {
     bulkTypeSelect.appendChild(option);
   });
 
-  // 5. Populate Filters (and restore any previous search state)
+  // 6. Populate Filters (and restore any previous search state)
   const searchInput = clone.getElementById("search-input");
   if (searchInput) searchInput.value = State.filters.search || "";
 
@@ -2603,7 +2658,7 @@ function renderLeads() {
     agentFilter.appendChild(option);
   });
 
-  // 6. THE SMART PAGINATION RENDERER
+  // 7. THE SMART PAGINATION RENDERER
   let currentPage = 1;
   const itemsPerPage = 50;
 
@@ -2655,7 +2710,7 @@ function renderLeads() {
     const startIndex = (currentPage - 1) * itemsPerPage;
     const displayLeads = filtered.slice(startIndex, startIndex + itemsPerPage);
 
-    // This updates the live DOM perfectly because `tableWrap` maintains its
+    // This updates the live DOM perfectly because \`tableWrap\` maintains its
     // pointer to the element even after the clone is mounted to the screen.
     if (tableWrap) {
       tableWrap.replaceChildren(renderLeadsTable(displayLeads));
@@ -2679,7 +2734,7 @@ function renderLeads() {
   // Initial draw before mounting
   updateTable();
 
-  // 7. Mount!
+  // 8. Mount!
   mainContent.appendChild(clone);
 }
 
@@ -3043,6 +3098,240 @@ function loadLeadInFeed(leadId) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+async function handleFileSelect(event) {
+  const files = event.target.files;
+  if (!files || files.length === 0) return;
+
+  // 🎯 Grab the Lead Type we saved from the modal
+  const selectedLeadType = event.target.dataset.leadType || "OFS";
+  let combinedCSVData = [];
+
+  UI.showToast(`📄 Reading ${files.length} file(s)...`, "info");
+
+  // Helper function to turn the FileReader into an awaitable Promise
+  const readSingleFile = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        // Use your existing parseCSV function to turn the text into objects
+        const parsed = parseCSV(e.target.result);
+        resolve(parsed);
+      };
+      reader.readAsText(file);
+    });
+  };
+
+  // Loop through every file they selected and parse it
+  for (let i = 0; i < files.length; i++) {
+    const parsedData = await readSingleFile(files[i]);
+    // Merge the new data into our master list
+    combinedCSVData = combinedCSVData.concat(parsedData);
+  }
+
+  console.log(
+    `📂 Merged ${files.length} files. Total raw leads: ${combinedCSVData.length}`,
+  );
+
+  // Send the massive combined list to your uploader
+  // Your "Bouncer" inside this function will automatically filter duplicates across all the files!
+  await uploadLeadsToSharePoint(combinedCSVData, selectedLeadType);
+
+  // Reset input so they can upload again later
+  event.target.value = "";
+}
+
+// The CSV Parser (Handles quotes and commas flawlessly)
+function parseCSV(text) {
+  const lines = text.split("\n").filter((line) => line.trim() !== "");
+  const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+  const data = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i]
+      .split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
+      .map((v) => v.trim().replace(/"/g, ""));
+    let row = {};
+
+    headers.forEach((h, index) => {
+      row[h] = values[index] || "";
+    });
+    data.push(row);
+  }
+  return data;
+}
+
+async function uploadLeadsToSharePoint(csvData, leadType) {
+  // ==========================================
+  // 🛡️ 1. THE IN-MEMORY BOUNCER (Deduplication)
+  // ==========================================
+  const generateKey = (first, last, address) => {
+    // The exact same sponge used for the combo multiplier!
+    const clean = (str) =>
+      (str || "")
+        .replace(/[^\w\s]/gi, "")
+        .toLowerCase()
+        .trim();
+    return `${clean(first)}|${clean(last)}|${clean(address)}`;
+  };
+
+  const existingKeys = new Set();
+
+  // A. Log all existing leads into the Bouncer's ledger
+  (State.leads || []).forEach((lead) => {
+    // Make sure these match the properties returned by your normalizeLeadItem function
+    const key = generateKey(lead.firstName, lead.lastName, lead.address);
+    existingKeys.add(key);
+  });
+
+  const validLeads = [];
+  let duplicateCount = 0;
+
+  // B. Scan the incoming CSV against the ledger
+  csvData.forEach((row) => {
+    const key = generateKey(
+      row["FirstName"],
+      row["LastName"],
+      row["StreetAddress"],
+    );
+
+    if (existingKeys.has(key)) {
+      duplicateCount++; // Blocked!
+    } else {
+      validLeads.push(row); // Allowed!
+      existingKeys.add(key); // Add to ledger to prevent duplicates WITHIN the CSV itself
+    }
+  });
+
+  const totalLeads = validLeads.length;
+
+  // C. Safety Check: Did the Bouncer block everything?
+  if (totalLeads === 0) {
+    UI.showToast(
+      `❌ Upload aborted: All ${csvData.length} leads in the file are already in the system.`,
+      "error",
+    );
+    return;
+  }
+
+  console.log(
+    `🚀 BATCH UPLOAD: ${totalLeads} valid leads... (${duplicateCount} duplicates skipped)`,
+  );
+  UI.showToast(
+    `🚀 Starting batch upload of ${totalLeads} leads... (Skipped ${duplicateCount} duplicates)`,
+    "info",
+  );
+
+  // ==========================================
+  // 🛑 2. HIJACK THE UI
+  // ==========================================
+  const importBtn = document.getElementById("importLeadsBtn");
+  const originalBtnHTML = importBtn ? importBtn.innerHTML : "Import CSV";
+  if (importBtn) {
+    importBtn.disabled = true;
+    importBtn.style.cursor = "not-allowed";
+  }
+
+  // ==========================================
+  // 🔀 3. URL SETUP FOR BATCHING
+  // ==========================================
+  const host = Config.sharePoint.hostname;
+  const sitePath = Config.sharePoint.sites.team;
+  const listId = Config.sharePoint.lists.leadsList;
+  const batchUrl = `${Config.sharePoint.graphBase}/$batch`;
+  const relativeUploadUrl = `/sites/${host}:/${sitePath}:/lists/${listId}/items`;
+
+  let successCount = 0;
+  let failCount = 0;
+  const batchSize = 20;
+
+  // ==========================================
+  // 📦 4. THE BATCHING ENGINE
+  // ==========================================
+  for (let i = 0; i < totalLeads; i += batchSize) {
+    // Chunking the cleaned validLeads array
+    const chunk = validLeads.slice(i, i + batchSize);
+
+    const currentBatchNum = Math.ceil(i / batchSize) + 1;
+    const totalBatches = Math.ceil(totalLeads / batchSize);
+    if (importBtn) {
+      importBtn.innerHTML = `⏳ Uploading Batch ${currentBatchNum} of ${totalBatches}... (${i} leads saved)`;
+    }
+
+    const batchRequests = chunk.map((row, index) => {
+      return {
+        id: String(index + 1),
+        method: "POST",
+        url: relativeUploadUrl,
+        headers: { "Content-Type": "application/json" },
+        body: {
+          fields: {
+            FirstName: row["FirstName"],
+            LastName: row["LastName"],
+            WorkAddress: row["StreetAddress"],
+            WorkCity: row["City"],
+            State: row["State"],
+            Zip: row["Zip"],
+            Lead_x0020_Type: leadType,
+            Agent_x0020_Assigned: "",
+            Status: "New",
+          },
+        },
+      };
+    });
+
+    const payload = { requests: batchRequests };
+
+    try {
+      const batchResponse = await Graph.apiFetch(batchUrl, "POST", payload);
+
+      if (batchResponse && batchResponse.responses) {
+        batchResponse.responses.forEach((res) => {
+          if (res.status >= 200 && res.status < 300) {
+            successCount++;
+          } else {
+            console.error(`❌ Batch item ${res.id} failed:`, res.body);
+            failCount++;
+          }
+        });
+      }
+    } catch (error) {
+      console.error("❌ Entire batch failed due to network error:", error);
+      failCount += chunk.length;
+      UI.showToast(
+        `⚠️ Network error on batch ${currentBatchNum}. Pausing...`,
+        "error",
+      );
+    }
+  }
+
+  // ==========================================
+  // ✅ 5. RESTORE THE UI & REPORT
+  // ==========================================
+  if (importBtn) {
+    importBtn.disabled = false;
+    importBtn.style.cursor = "pointer";
+    importBtn.innerHTML = originalBtnHTML;
+  }
+
+  if (failCount === 0) {
+    UI.showToast(
+      `✅ Upload complete! ${successCount} leads added. (Skipped ${duplicateCount} duplicates)`,
+      "success",
+    );
+  } else if (successCount > 0 && failCount > 0) {
+    UI.showToast(
+      `⚠️ Upload finished: ${successCount} added, ${failCount} failed. (Skipped ${duplicateCount} duplicates)`,
+      "warning",
+    );
+  } else {
+    UI.showToast(`❌ Upload failed. 0 leads were added.`, "error");
+  }
+
+  // ==========================================
+  // 🔄 6. RELOAD DATA
+  // ==========================================
+  await loadAllData();
+}
 // ============================================================
 //  DAILY REPORT (Admin only)
 // ============================================================

@@ -706,6 +706,7 @@ const Graph = (() => {
   }
 
   return {
+    apiFetch,
     getLeads,
     addLead,
     updateLead,
