@@ -952,10 +952,20 @@ function renderMyLeads() {
   //  THE STRICT BOUNCER
   // ==========================================
   let myLeads;
+  // ==========================================
+  // 🏎️ SPEED UPGRADE: Pre-calculate "Today" and setup a Timezone Cache
+  // ==========================================
+  const filterNow = new Date();
+  const filterTodayMidnight = new Date(filterNow);
+  filterTodayMidnight.setHours(0, 0, 0, 0);
+
+  const tzHourCache = {}; // This will hold our cached hours
+
   if (window._forceShowLead && window._myLeads && window._myLeads.length > 0) {
     myLeads = window._myLeads;
   } else {
     myLeads = State.leads.filter((l) => {
+      // 1. Agent Match (Do this first, it drops 90% of the database instantly)
       const assigned = (l.assignedTo || "")
         .toLowerCase()
         .replace(/\s+/g, " ")
@@ -966,39 +976,93 @@ function renderMyLeads() {
           assigned === userName.replace(/\s+/g, " ") ||
           assigned === userEmail.replace(/\s+/g, " "));
 
-      // 🛡️ REMOVED "3rd Contact" from terminal so it stays in the queue
-      const isTerminal = Config.terminalStatuses.includes(l.status);
-      const inCoolOff = Graph.isInCoolOff(l);
+      if (!matchesAgent) return false; // 🚫 DROP IT
 
+      // 2. Terminal Status
+      if (Config.terminalStatuses.includes(l.status)) return false; // 🚫 DROP IT
+
+      // 3. Dismissed Leads
+      if (
+        window._skippedSessionLeads &&
+        window._skippedSessionLeads.includes(l.id)
+      ) {
+        return false; // 🚫 DROP IT
+      }
+
+      // 3.5 Patch for the lead polling
+      if (window._sessionWorkedLeads && window._sessionWorkedLeads.has(l.id)) {
+        const savedTime = window._sessionWorkedLeads.get(l.id);
+        const minutesSinceSave = (Date.now() - savedTime) / 60000;
+
+        if (minutesSinceSave < 5) {
+          return false; // 🚫 DROP IT (Saved less than 5 mins ago, SharePoint is still catching up)
+        } else {
+          // 🧹 TRASH IT: It's been 5 mins. SharePoint has definitely indexed it by now.
+          // Delete it from local memory so the real 2-day cool-off logic can safely take over.
+          window._sessionWorkedLeads.delete(l.id);
+        }
+      }
+
+      // 4. Callback Math
       let waitingForDate = false;
       let isDueCallback = false;
 
       if (l.callbackAt) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
         const scheduledDate = new Date(l.callbackAt);
         scheduledDate.setHours(0, 0, 0, 0);
 
         if (l.status === "Pending Order") {
-          if (today <= scheduledDate) waitingForDate = true;
+          if (filterTodayMidnight <= scheduledDate) waitingForDate = true;
         } else {
-          if (today < scheduledDate) waitingForDate = true;
+          if (filterTodayMidnight < scheduledDate) waitingForDate = true;
         }
         if (!waitingForDate) isDueCallback = true;
       }
 
-      const passedCoolOff = isDueCallback ? true : !inCoolOff;
-      const isDismissed =
-        window._skippedSessionLeads &&
-        window._skippedSessionLeads.includes(l.id);
+      if (waitingForDate) return false; // 🚫 DROP IT
 
-      return (
-        matchesAgent &&
-        !isTerminal &&
-        passedCoolOff &&
-        !waitingForDate &&
-        !isDismissed
-      );
+      // 5. Cool-Off Shield
+      const inCoolOff = Graph.isInCoolOff(l);
+      const passedCoolOff = isDueCallback ? true : !inCoolOff;
+
+      if (!passedCoolOff) return false; // 🚫 DROP IT
+
+      // ==========================================
+      // 🚀 THE USER'S GENIUS FIX:
+      // The timezone check ONLY runs if it survived all the rules above!
+      // ==========================================
+      if (l.state) {
+        let tz = "America/New_York"; // Fallback
+        if (typeof stateTimezones !== "undefined" && stateTimezones[l.state]) {
+          tz = stateTimezones[l.state];
+        }
+
+        // Pull from cache instead of running Intl.DateTimeFormat every time
+        if (tzHourCache[tz] === undefined) {
+          try {
+            tzHourCache[tz] = parseInt(
+              new Intl.DateTimeFormat("en-US", {
+                hour: "numeric",
+                hour12: false,
+                timeZone: tz,
+              }).format(filterNow),
+              10,
+            );
+          } catch (e) {
+            console.warn("Timezone calculation failed for tz:", tz);
+            tzHourCache[tz] = 12; // Safe fallback
+          }
+        }
+
+        const localHour = tzHourCache[tz];
+        // Only true if it is 9 AM or later, AND before 8 PM
+        const isAwake = localHour >= 9 && localHour < 20;
+
+        if (!isAwake) return false; // 🚫 DROP IT (Too early/late)
+      }
+
+      // 🎉 If it made it all the way down here, it goes into the queue!
+      return true;
     });
 
     // ==========================================
@@ -1334,51 +1398,6 @@ function renderLeadFeedCard(myLeads) {
         callbackAlert.innerHTML = `📅 ACTION REQUIRED: Scheduled follow-up today at ${timeString}`;
       }
       callbackAlert.style.display = "block";
-    }
-  }
-
-  // ==========================================
-  // 🚀 NEW: 1.5 THE OUT-OF-HOURS BANNER
-  // ==========================================
-  let localHour = 12; // Default to safe noon just in case
-  try {
-    let tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    // We use the same stateTimezones dictionary you built!
-    if (
-      lead.state &&
-      typeof stateTimezones !== "undefined" &&
-      stateTimezones[lead.state]
-    ) {
-      tz = stateTimezones[lead.state];
-    }
-    localHour = parseInt(
-      new Intl.DateTimeFormat("en-US", {
-        hour: "numeric",
-        hour12: false,
-        timeZone: tz,
-      }).format(new Date()),
-      10,
-    );
-  } catch (e) {
-    console.warn("Timezone calculation failed, defaulting to safe hours.", e);
-  }
-
-  const isAwake = localHour >= 9 && localHour < 20;
-
-  if (!isAwake) {
-    const oohBanner = document.createElement("div");
-    // We dynamically generate the banner HTML so you don't have to touch your template
-    oohBanner.innerHTML = `
-      <div style="background: #FDE68A; color: #92400E; padding: 10px 14px; border-radius: 6px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #F59E0B;">
-        <span style="font-size: 13px;"><strong>⚠️ Outside of Calling Hours:</strong> Outside the 9AM - 8PM window in ${lead.state || "their timezone"}.</span>
-        <button type="button" onclick="skipOutOfHoursLead('${lead.id}')" style="background: #92400E; color: #fff; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: bold; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">Skip & Save Data</button>
-      </div>
-    `;
-
-    // Inject it perfectly right above the phone/email block
-    const metaContainer = clone.getElementById("feed-meta-container");
-    if (metaContainer) {
-      metaContainer.parentNode.insertBefore(oohBanner, metaContainer);
     }
   }
 
@@ -1753,6 +1772,8 @@ function stageStatus(leadId, newStatus) {
 
 async function agentSaveAll(leadId) {
   const user = State.currentUser;
+  window._sessionWorkedLeads = window._sessionWorkedLeads || new Map();
+  window._sessionWorkedLeads.set(leadId, Date.now());
   const lead = State.leads.find((l) => l.id === leadId);
   if (!lead) return;
 
@@ -1888,9 +1909,21 @@ async function agentSaveAll(leadId) {
     // Update Save Button
     const saveBtn = document.getElementById("feed-save-btn");
     if (saveBtn) {
+      // 1. Trigger the Success State
       saveBtn.textContent = "Saved ✓";
       saveBtn.disabled = true;
-      saveBtn.style.background = "var(--green)";
+      saveBtn.style.background = "var(--green, #10b981)";
+      saveBtn.style.borderColor = "var(--green, #10b981)";
+      saveBtn.style.cursor = "default";
+
+      // 2. The 2-Second Cooldown & Reset
+      setTimeout(() => {
+        saveBtn.textContent = "Save";
+        saveBtn.disabled = false;
+        saveBtn.style.background = ""; // Clears the inline green background
+        saveBtn.style.borderColor = "";
+        saveBtn.style.cursor = "pointer";
+      }, 2000);
     }
 
     // Show Next Row
