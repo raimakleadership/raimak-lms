@@ -186,8 +186,14 @@ async function loadAllData() {
       UI.showToast("Syncing today's activity...", "info");
 
       // Standard agents just get the fast daily log
-      todayLogs = await Graph.getActivityLogForToday();
-      State.activityLog = todayLogs;
+      const logData = await Graph.getActivityLog(
+        State.lastSyncDate,
+        State.activityLog,
+      );
+
+      State.activityLog = logData.updatedLogs;
+      // 🚀 UPDATED: Swapped newHighestId for newSyncDate
+      State.lastSyncDate = logData.newSyncDate;
 
       UI.showToast("✅ Activity synced!", "success");
     }
@@ -285,6 +291,11 @@ function navigate(view) {
     case "callbacks":
       renderCallBacks();
       break;
+
+    case "stats":
+      renderStats();
+      break;
+
     case "drip":
       renderDripFeed();
       break;
@@ -4271,6 +4282,370 @@ function renderActivity() {
 
   // Initialize on first load
   updateTable();
+}
+
+// ============================================================
+//  STATS PAGE
+// ============================================================
+function renderStats() {
+  const currentUser = State.currentUser;
+  if (!currentUser || !currentUser.email) return;
+
+  const appContainer = document.getElementById("main-content");
+  appContainer.innerHTML = "";
+
+  const template = document.getElementById("tmpl-stats-page");
+  const clone = template.content.cloneNode(true);
+  appContainer.appendChild(clone);
+
+  const adminControls = document.getElementById("admin-stats-controls");
+  const agentSelect = document.getElementById("stats-agent-select");
+  const timeframeSelect = document.getElementById("stats-timeframe-select");
+
+  // 🎛️ Setup Event Listeners
+  const refreshData = () => {
+    const targetEmail =
+      isAdmin() && agentSelect.value ? agentSelect.value : currentUser.email;
+    const timeframe = timeframeSelect.value;
+    paintStats(targetEmail, timeframe);
+  };
+
+  // Listen to the Timeframe dropdown
+  timeframeSelect.addEventListener("change", refreshData);
+
+  if (isAdmin()) {
+    adminControls.style.display = "block";
+
+    const agents = (State.agentScores || [])
+      .map((s) => ({
+        name: s.AgentName,
+        email: s.AgentEmail,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    agents.forEach((agent) => {
+      const option = document.createElement("option");
+      option.value = agent.email;
+      option.textContent = agent.name;
+      if (agent.email.toLowerCase() === currentUser.email.toLowerCase()) {
+        option.selected = true;
+      }
+      agentSelect.appendChild(option);
+    });
+
+    // Listen to the Admin dropdown
+    agentSelect.addEventListener("change", refreshData);
+  }
+
+  // 🚀 Initial Paint
+  refreshData();
+}
+
+function paintStats(email, timeframe) {
+  const stats = getAgentStats(email, timeframe);
+
+  // 1. Update the Dynamic Labels
+  let timeLabel = "(Today)";
+  if (timeframe === "week") timeLabel = "(Past 7 Days)";
+  if (timeframe === "month") timeLabel = "(Past 30 Days)";
+  if (timeframe === "all") timeLabel = "(All Time)";
+
+  document.getElementById("label-sales").textContent = `Sales ${timeLabel}`;
+  document.getElementById("label-touches").textContent =
+    `Leads Touched ${timeLabel}`;
+  document.getElementById("label-conversion").textContent =
+    `Close Rate ${timeLabel}`;
+
+  // 2. The Animation Helper
+  const animateValue = (id, endVal, isPercent = false) => {
+    const obj = document.getElementById(id);
+    if (!obj) return;
+
+    // Safety check in case endVal is somehow NaN
+    if (
+      endVal === undefined ||
+      endVal === null ||
+      (typeof endVal === "number" && isNaN(endVal))
+    ) {
+      endVal = 0;
+    }
+
+    let startTimestamp = null;
+    const duration = 600;
+
+    const step = (timestamp) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+
+      if (isPercent) {
+        const rawPercent = parseFloat(endVal) || 0;
+        const currentPercent = (progress * rawPercent).toFixed(1);
+        obj.textContent = currentPercent + "%";
+      } else {
+        const currentVal = Math.floor(progress * endVal);
+        obj.textContent = currentVal;
+      }
+
+      if (progress < 1) window.requestAnimationFrame(step);
+      else obj.textContent = endVal;
+    };
+    window.requestAnimationFrame(step);
+  };
+
+  // 3. Trigger Core Animations
+  animateValue("stat-sales-timeframe", stats.salesTimeframe);
+  animateValue("stat-touches-timeframe", stats.uniqueLeadsTimeframe);
+  animateValue("stat-sales-total", stats.salesTotal);
+  animateValue("stat-conversion", stats.conversionRate, true);
+
+  // Static update for the small Actions text
+  document.getElementById("stat-actions-timeframe").textContent =
+    stats.touchesTimeframe;
+
+  // 4. Trigger Advanced Metric Animations
+  animateValue("stat-current-points", stats.currentPoints);
+
+  if (timeframe === "day") {
+    document.getElementById("stat-avg-daily").textContent = "--";
+  } else {
+    animateValue("stat-avg-daily", stats.avgDailyLeads);
+  }
+
+  // ==========================================
+  // 5. CHART GENERATION LOGIC
+  // ==========================================
+  const chartsContainer = document.getElementById("stats-charts-container");
+
+  if (timeframe === "day" || stats.trends.labels.length <= 1) {
+    chartsContainer.style.display = "none";
+  } else {
+    chartsContainer.style.display = "block";
+
+    window._chartInstances = window._chartInstances || {};
+
+    const drawChart = (
+      canvasId,
+      title,
+      dataArray,
+      colorStr,
+      isPercent = false,
+    ) => {
+      if (window._chartInstances[canvasId]) {
+        window._chartInstances[canvasId].destroy();
+      }
+
+      const canvasEl = document.getElementById(canvasId);
+      if (!canvasEl) return;
+
+      const ctx = canvasEl.getContext("2d");
+
+      // 🎨 THE UPGRADE: Dynamic Fading Gradients
+      const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+      gradient.addColorStop(0, colorStr + "66"); // 40% opacity at the top
+      gradient.addColorStop(1, colorStr + "00"); // 0% opacity at the bottom
+
+      window._chartInstances[canvasId] = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: stats.trends.labels,
+          datasets: [
+            {
+              label: title,
+              data: dataArray,
+              borderColor: colorStr,
+              backgroundColor: gradient, // 🚀 Apply the gradient here
+              borderWidth: 3,
+              fill: true,
+              pointBackgroundColor: "#ffffff", // White dots with colored borders
+              pointBorderColor: colorStr,
+              pointBorderWidth: 2,
+              pointRadius: 4,
+              pointHoverRadius: 6,
+              tension: 0.4, // Extra smooth Bezier curves
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            title: { display: true, text: title },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: function (value) {
+                  return isPercent ? value + "%" : value;
+                },
+              },
+            },
+          },
+        },
+      });
+    };
+
+    drawChart("chart-sales", "Daily Sales", stats.trends.sales, "#10b981");
+    drawChart(
+      "chart-touches",
+      "Daily Leads Touched",
+      stats.trends.touches,
+      "#f59e0b",
+    );
+    drawChart(
+      "chart-conversion",
+      "Daily Close Rate (%)",
+      stats.trends.rates,
+      "#8b5cf6",
+      true,
+    );
+  }
+}
+
+function getAgentStats(targetEmail, timeframe = "day") {
+  const target = targetEmail.toLowerCase().trim();
+  const now = Date.now();
+
+  let startMs = 0;
+
+  // 🕰️ Calculate the Time Boundary
+  if (timeframe === "day") {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    startMs = today.getTime();
+  } else if (timeframe === "week") {
+    startMs = now - 7 * 24 * 60 * 60 * 1000;
+  } else if (timeframe === "month") {
+    startMs = now - 30 * 24 * 60 * 60 * 1000;
+  }
+
+  let salesTimeframe = 0;
+  let salesTotal = 0;
+  let touchesTimeframe = 0;
+  let uniqueLeadsTouchedTimeframe = new Set();
+  let dailyMap = {}; // 📈 Tracks day-by-day stats for the charts
+
+  // 1. Sweep the Activity Log
+  (State.activityLog || []).forEach((log) => {
+    // 🩹 Name-to-Email Converter
+    let rawAgentString = (log.agentEmail || log.agent || "")
+      .toLowerCase()
+      .trim();
+    if (rawAgentString && !rawAgentString.includes("@")) {
+      const nameParts = rawAgentString.split(/\s+/);
+      if (nameParts.length >= 2) {
+        const firstInitial = nameParts[0][0];
+        const lastName = nameParts[nameParts.length - 1];
+        rawAgentString = `${firstInitial}.${lastName}@raimak.com`;
+      }
+    }
+
+    const logEmail = rawAgentString;
+    if (logEmail !== target) return;
+
+    // 🛑 Noise Filter: Only count actual status updates
+    if (!log.action || !log.action.includes("Status:")) return;
+
+    const logMs =
+      typeof log.timestamp === "number"
+        ? log.timestamp
+        : Date.parse(log.timestamp);
+    if (isNaN(logMs)) return;
+
+    const isInTimeframe = logMs >= startMs;
+
+    // 📈 Generate a Date Key (e.g., "5/14")
+    let dateKey = "";
+    if (isInTimeframe) {
+      const d = new Date(logMs);
+      dateKey = `${d.getMonth() + 1}/${d.getDate()}`;
+      if (!dailyMap[dateKey]) {
+        dailyMap[dateKey] = {
+          sales: 0,
+          touches: 0,
+          uniqueLeads: new Set(),
+          timestamp: d.setHours(0, 0, 0, 0),
+        };
+      }
+    }
+
+    if (isInTimeframe) {
+      touchesTimeframe++;
+
+      const trueLeadId = log.leadId || log.LeadId || log.LeadID;
+      const fallbackName = log.leadName || log.Title || "Unknown";
+
+      // 🛡️ Data-Type Crusher (Prevents duplicates)
+      const rawKey = trueLeadId || fallbackName;
+      const uniqueKey = String(rawKey).toLowerCase().trim();
+
+      if (uniqueKey && uniqueKey !== "unknown") {
+        uniqueLeadsTouchedTimeframe.add(uniqueKey);
+        if (dateKey) dailyMap[dateKey].uniqueLeads.add(uniqueKey); // Track Daily Unique Touches
+      }
+    }
+
+    if (log.action.includes("Sold")) {
+      salesTotal++;
+      if (isInTimeframe) {
+        salesTimeframe++;
+        if (dateKey) dailyMap[dateKey].sales++; // Track Daily Sales
+      }
+    }
+  });
+
+  // 📈 Format the Trend Data for Chart.js
+  const sortedDays = Object.values(dailyMap).sort(
+    (a, b) => a.timestamp - b.timestamp,
+  );
+  const trends = { labels: [], sales: [], touches: [], rates: [] };
+
+  sortedDays.forEach((day) => {
+    const d = new Date(day.timestamp);
+    trends.labels.push(`${d.getMonth() + 1}/${d.getDate()}`);
+    trends.sales.push(day.sales);
+    trends.touches.push(day.uniqueLeads.size);
+    // Protect against NaN by ensuring size > 0 before dividing
+    trends.rates.push(
+      day.uniqueLeads.size > 0
+        ? parseFloat(((day.sales / day.uniqueLeads.size) * 100).toFixed(1))
+        : 0,
+    );
+  });
+
+  // 🔬 CALCULATE ADVANCED METRICS
+  const activeDays =
+    Object.keys(dailyMap).length > 0 ? Object.keys(dailyMap).length : 1; // Prevent dividing by zero
+  let totalDailyUniqueTouches = 0;
+
+  Object.values(dailyMap).forEach((day) => {
+    totalDailyUniqueTouches += day.uniqueLeads.size;
+  });
+
+  // Math.round to keep the Pace number clean
+  const avgDailyLeads = Math.round(totalDailyUniqueTouches / activeDays);
+
+  // Grab their Points from the gamification array
+  const scoreRow = (State.agentScores || []).find(
+    (s) => (s.AgentEmail || "").toLowerCase().trim() === target,
+  );
+  const currentPoints = scoreRow ? scoreRow.CurrentPoints : 0;
+
+  return {
+    salesTimeframe,
+    salesTotal,
+    touchesTimeframe,
+    uniqueLeadsTimeframe: uniqueLeadsTouchedTimeframe.size,
+    conversionRate:
+      uniqueLeadsTouchedTimeframe.size > 0
+        ? ((salesTimeframe / uniqueLeadsTouchedTimeframe.size) * 100).toFixed(
+            1,
+          ) + "%"
+        : "0%",
+    avgDailyLeads,
+    currentPoints,
+    trends,
+  };
 }
 
 // ============================================================
