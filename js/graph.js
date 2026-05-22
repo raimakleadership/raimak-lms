@@ -282,20 +282,63 @@ const Graph = (() => {
       itemId +
       "/fields";
 
-    // 🚀 THE FIX: We package the request into an options object
-    // This allows us to pass the specific header needed to kill 409 errors.
     const options = {
       method: "PATCH",
       body: JSON.stringify(fields),
       headers: {
         "Content-Type": "application/json",
-        // 🛡️ THE NUCLEAR OPTION:
-        // Tells SharePoint "Overwrite this no matter what version is on the server."
         "If-Match": "*",
       },
     };
 
-    return await apiFetch(url, options);
+    try {
+      // Try the normal update first
+      return await apiFetch(url, options);
+    } catch (err) {
+      const errMsg = (err.message || "").toLowerCase();
+
+      // 👻 THE GHOST LEAD INTERCEPTOR
+      if (errMsg.includes("404") || errMsg.includes("not found")) {
+        console.warn(`Lead ${itemId} missing from server! Resurrecting...`);
+
+        // 1. Find the ghost in the global UI state
+        const deadLead =
+          window.State && window.State.leads
+            ? window.State.leads.find((l) => l.id === itemId)
+            : null;
+
+        if (!deadLead) {
+          throw new Error(
+            "Lead missing from server and no local memory found to rebuild it.",
+          );
+        }
+
+        // 2. Rebuild the core fields
+        // ⚠️ EDIT THESE to match your exact SharePoint column internal names
+        const rebuiltPayload = {
+          Title: deadLead.name || "Unknown",
+          PhoneNumber: deadLead.phone || "",
+          Address: deadLead.address || "",
+          // CBR: deadLead.cbr || "",
+          // BTN: deadLead.btn || "",
+
+          // 3. Drop the new edits right on top of the old data
+          ...fields,
+        };
+
+        // 4. Fire your existing addLead function to create the new row
+        const resurrectedLead = await addLead(rebuiltPayload);
+
+        // 5. Swap the ID in local RAM so the UI knows about the new row
+        deadLead.id = resurrectedLead.id;
+
+        // Pretend everything went perfectly
+        return resurrectedLead;
+      }
+
+      // If it failed for any other reason (like a 500 error), throw it normally
+      throw err;
+    }
   }
 
   async function deleteLead(itemId) {
@@ -935,8 +978,16 @@ const Graph = (() => {
     // 🚀 THE FIX: Stamp it with today's date instead of null
     const todayDate = new Date().toISOString().split("T")[0];
 
+    // 🛑 THE INTERCEPTOR: Check if this lead has the D2D bounty flag
+    const isFlagged =
+      lead &&
+      (lead.flaggedForExport === true || lead.FlaggedForExport === true);
+
+    // If flagged, lock it away. Otherwise, toss it back in the "New" pool.
+    const targetStatus = isFlagged ? "D2D Lead" : "New";
+
     await updateLead(leadId, {
-      Status: "New",
+      Status: targetStatus,
       Agent_x0020_Assigned: null,
       PreviousAgents: newPrev,
       LastTouchedOn: todayDate, // Resets the clock!

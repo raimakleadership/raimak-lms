@@ -322,7 +322,6 @@ function renderDashboard() {
   const todaySales = State.todaySales;
   const total = leads.length;
 
-  // -- Keep all his math/counting logic exactly the same --
   const active = leads.filter(
     (l) => !Config.terminalStatuses.includes(l.status),
   ).length;
@@ -344,25 +343,21 @@ function renderDashboard() {
     if (l.assignedTo)
       agentSales[l.assignedTo] = (agentSales[l.assignedTo] || 0) + 1;
   });
+
   const top5 = Object.entries(agentSales)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
-  const recentLeads = leads
-    .slice()
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 8);
-
   // ==========================================
   //  THE NEW RENDER LOGIC
   // ==========================================
   const mainContent = document.getElementById("main-content");
-  mainContent.innerHTML = ""; // Clear existing screen
+  mainContent.innerHTML = "";
 
   // 1. Clone the HTML blueprint
   const template = document.getElementById("tmpl-dashboard");
   const clone = template.content.cloneNode(true);
 
-  // 2. Handle Admin Security (Rip out admin elements if they are an agent)
+  // 2. Handle Admin Security
   if (!isAdmin()) {
     clone.querySelectorAll(".admin-only").forEach((el) => el.remove());
   }
@@ -380,7 +375,6 @@ function renderDashboard() {
   clone.getElementById("kpi-cooloff-sub").textContent =
     `${Config.rules.coolOffDays}-day rule active`;
 
-  // Apply conditional styling to KPI cards
   const coolOffCard = clone.getElementById("kpi-cooloff-card");
   coolOffCard.className = `kpi-card ${coolOff > 0 ? "kpi-info" : "kpi-neutral"}`;
 
@@ -399,7 +393,7 @@ function renderDashboard() {
     }
   }
 
-  // 4. Inject Dynamic Lists (Much smaller innerHTML blocks now!)
+  // 4. Inject Dynamic Lists
   if (isAdmin()) {
     clone.getElementById("dash-pipeline-status").innerHTML = Config.leadStatuses
       .map((s) => {
@@ -436,9 +430,8 @@ function renderDashboard() {
 
   const aliasMap = {
     "j.torres@raimak.com": "JULIAN TORRES",
-    // ANY EMAILS THAT ARE SHOWING UP ON THE LEADERBOARD, DO THIS FOR THEM.
   };
-  // 1. Loop through all logs and count unique leads touched per agent today
+
   (State.activityLog || []).forEach((log) => {
     let isToday = false;
     if (log.timestamp) {
@@ -457,7 +450,6 @@ function renderDashboard() {
         .toLowerCase()
         .trim();
 
-      // THE FIX: Check the alias map first, then fall back to the contractor list
       let displayName = aliasMap[rawAgent];
 
       if (!displayName) {
@@ -479,13 +471,11 @@ function renderDashboard() {
     }
   });
 
-  // 2. Convert sets to numbers, sort highest to lowest, and grab the top 5
   const top5Contacts = Object.entries(agentUniqueLeads)
     .map(([name, leadSet]) => [name, leadSet.size])
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
-  // 3. Inject exactly like the sales leaderboard, but with blue text for contacts!
   const dashContactsEl = clone.getElementById("dash-top5-contacts");
   if (dashContactsEl) {
     dashContactsEl.innerHTML = top5Contacts.length
@@ -502,21 +492,17 @@ function renderDashboard() {
       : `<p class="empty-state">No contacts logged yet today.</p>`;
   }
 
-  // 5. Inject the Heavy Tables
-  clone
-    .getElementById("dash-recent-table")
-    .replaceChildren(renderLeadsTable(recentLeads, true));
+  // ✂️ REMOVED: The dash-recent-table injection
 
+  // 5. Inject the Recycle Queue Table
   if (isAdmin() && needRecycle > 0) {
     clone.getElementById("dash-recycle-title").textContent =
       `⚠️ Recycle Queue — ${needRecycle} lead${needRecycle !== 1 ? "s" : ""} ready`;
 
-    // 1. Filter out only the leads that need recycling
     const recycleQueue = leads.filter(
       (l) => l.flags && l.flags.includes("needs_recycle"),
     );
 
-    // 2. Build the table HTML
     clone.getElementById("dash-recycle-table").innerHTML = `
       <table class="data-table">
         <thead>
@@ -551,9 +537,9 @@ function renderDashboard() {
       </table>
     `;
   } else if (isAdmin()) {
-    // Hide the whole section if no leads to recycle
     clone.getElementById("dash-recycle-section").style.display = "none";
   }
+
   // 6. Mount it to the screen!
   mainContent.appendChild(clone);
 
@@ -913,7 +899,14 @@ let _currentFeedIndex = 0;
 function renderMyLeads() {
   if (typeof _leadSaved === "undefined") window._leadSaved = false;
 
-  // 🕒 KEEPING THE CLOCK LOGIC AT THE TOP (Local Scope)
+  // ==========================================
+  // 🛑 THE SHRINKING ARRAY FIX
+  // ==========================================
+  if (!window._forceShowLead) {
+    window._currentFeedIndex = 0;
+  }
+
+  // 🕒 KEEPING THE CLOCK LOGIC AT THE TOP
   const updateClock = () => {
     const clockEl = document.getElementById("myleads-clock");
     if (!clockEl) return;
@@ -963,20 +956,19 @@ function renderMyLeads() {
   //  THE STRICT BOUNCER
   // ==========================================
   let myLeads;
-  // ==========================================
-  // 🏎️ SPEED UPGRADE: Pre-calculate "Today" and setup a Timezone Cache
-  // ==========================================
+  let hiddenByTimezone = 0; // 🕵️ NEW: Our tracker for sleeping leads!
+
   const filterNow = new Date();
   const filterTodayMidnight = new Date(filterNow);
   filterTodayMidnight.setHours(0, 0, 0, 0);
 
-  const tzHourCache = {}; // This will hold our cached hours
+  const tzHourCache = {};
 
   if (window._forceShowLead && window._myLeads && window._myLeads.length > 0) {
     myLeads = window._myLeads;
   } else {
     myLeads = State.leads.filter((l) => {
-      // 1. Agent Match (Do this first, it drops 90% of the database instantly)
+      // 1. Agent Match
       const assigned = (l.assignedTo || "")
         .toLowerCase()
         .replace(/\s+/g, " ")
@@ -987,17 +979,17 @@ function renderMyLeads() {
           assigned === userName.replace(/\s+/g, " ") ||
           assigned === userEmail.replace(/\s+/g, " "));
 
-      if (!matchesAgent) return false; // 🚫 DROP IT
+      if (!matchesAgent) return false;
 
       // 2. Terminal Status
-      if (Config.terminalStatuses.includes(l.status)) return false; // 🚫 DROP IT
+      if (Config.terminalStatuses.includes(l.status)) return false;
 
       // 3. Dismissed Leads
       if (
         window._skippedSessionLeads &&
         window._skippedSessionLeads.includes(l.id)
       ) {
-        return false; // 🚫 DROP IT
+        return false;
       }
 
       // 3.5 Patch for the lead polling
@@ -1006,10 +998,8 @@ function renderMyLeads() {
         const minutesSinceSave = (Date.now() - savedTime) / 60000;
 
         if (minutesSinceSave < 5) {
-          return false; // 🚫 DROP IT (Saved less than 5 mins ago, SharePoint is still catching up)
+          return false;
         } else {
-          // 🧹 TRASH IT: It's been 5 mins. SharePoint has definitely indexed it by now.
-          // Delete it from local memory so the real 2-day cool-off logic can safely take over.
           window._sessionWorkedLeads.delete(l.id);
         }
       }
@@ -1030,25 +1020,23 @@ function renderMyLeads() {
         if (!waitingForDate) isDueCallback = true;
       }
 
-      if (waitingForDate) return false; // 🚫 DROP IT
+      if (waitingForDate) return false;
 
       // 5. Cool-Off Shield
       const inCoolOff = Graph.isInCoolOff(l);
       const passedCoolOff = isDueCallback ? true : !inCoolOff;
 
-      if (!passedCoolOff) return false; // 🚫 DROP IT
+      if (!passedCoolOff) return false;
 
       // ==========================================
-      // 🚀 THE USER'S GENIUS FIX:
-      // The timezone check ONLY runs if it survived all the rules above!
+      // 🚀 THE TIMEZONE SHIELD
       // ==========================================
       if (l.state) {
-        let tz = "America/New_York"; // Fallback
+        let tz = "America/New_York";
         if (typeof stateTimezones !== "undefined" && stateTimezones[l.state]) {
           tz = stateTimezones[l.state];
         }
 
-        // Pull from cache instead of running Intl.DateTimeFormat every time
         if (tzHourCache[tz] === undefined) {
           try {
             tzHourCache[tz] = parseInt(
@@ -1061,24 +1049,22 @@ function renderMyLeads() {
             );
           } catch (e) {
             console.warn("Timezone calculation failed for tz:", tz);
-            tzHourCache[tz] = 12; // Safe fallback
+            tzHourCache[tz] = 12;
           }
         }
 
         const localHour = tzHourCache[tz];
-        // Only true if it is 9 AM or later, AND before 8 PM
         const isAwake = localHour >= 8 && localHour < 20;
 
-        if (!isAwake) return false; // 🚫 DROP IT (Too early/late)
+        if (!isAwake) {
+          hiddenByTimezone++; // 🎯 THE TRACKER: Catch the sleeping lead before it drops
+          return false;
+        }
       }
 
-      // 🎉 If it made it all the way down here, it goes into the queue!
       return true;
     });
 
-    // ==========================================
-    //  🚀 THE SORT: CALLBACKS > 3RD > 2ND > 1ST
-    // ==========================================
     const statusPriority = {
       "3rd Contact": 1,
       "2nd Contact": 2,
@@ -1100,9 +1086,6 @@ function renderMyLeads() {
         return aWeight - bWeight;
       }
 
-      // 🚀 THE STABILITY FIX:
-      // If the priority is the same, always sort by ID.
-      // This prevents leads from "shuffling" during background syncs.
       return a.id.localeCompare(b.id);
     });
   }
@@ -1124,35 +1107,8 @@ function renderMyLeads() {
   console.log(
     `Total leads technically assigned to this agent in RAM: ${rawMyLeads.length}`,
   );
-
-  if (rawMyLeads.length > 0) {
-    const terminal = rawMyLeads.filter((l) =>
-      Config.terminalStatuses.includes(l.status),
-    );
-    const coolOff = rawMyLeads.filter(
-      (l) => Graph.isInCoolOff(l) && !l.callbackAt,
-    );
-
-    let futureCBs = 0;
-    rawMyLeads.forEach((l) => {
-      if (l.callbackAt) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const cb = new Date(l.callbackAt);
-        cb.setHours(0, 0, 0, 0);
-        if (l.status === "Pending Order" ? today <= cb : today < cb)
-          futureCBs++;
-      }
-    });
-
-    console.log(`🚨 Hidden by Terminal Status: ${terminal.length}`);
-    console.log(`🥶 Hidden by 2-Day Cool-Off: ${coolOff.length}`);
-    console.log(`📅 Hidden by Future Callback: ${futureCBs}`);
-  } else {
-    console.log(
-      `❌ ERROR: SharePoint 'assignedTo' does not match the agent's login name/email!`,
-    );
-  }
+  if (hiddenByTimezone > 0)
+    console.log(`🌙 Sleeping Leads Caught: ${hiddenByTimezone}`);
   console.log("------------------------");
 
   window._myLeads = myLeads;
@@ -1161,44 +1117,68 @@ function renderMyLeads() {
   window._forceShowLead = false;
 
   // ==========================================
-  //  ☕ THE FINISH LINE (Ghost Lead Fix)
+  //  ☕ THE FINISH LINE (Preserving the UI)
   // ==========================================
   const mainContent = document.getElementById("main-content");
+  mainContent.innerHTML = "";
+
+  const template = document.getElementById("tmpl-my-leads");
+  const clone = template.content.cloneNode(true);
+
+  const contactsToday =
+    typeof getMyContactsToday === "function" ? getMyContactsToday() : 0;
+  const textEl = clone.getElementById("myleads-contact-text");
+  if (textEl) textEl.textContent = contactsToday;
+
+  const subtitleEl = clone.getElementById("myleads-subtitle");
+  const feedWrap = clone.getElementById("lead-feed-wrap");
+
+  // If the queue is empty, inject the empty state INTO the feed wrapper
   if (myLeads.length === 0 || _currentFeedIndex >= myLeads.length) {
     _currentFeedIndex = 0;
     if (window._clockTimer) clearInterval(window._clockTimer);
 
-    mainContent.innerHTML = `
-      <div class="card" style="text-align:center; padding:60px 20px;">
-        <div style="font-size:4rem; margin-bottom:20px;">☕</div>
-        <h2 class="view-title">Queue Clear!</h2>
-        <p style="color:var(--text-3); margin-bottom:24px;">Worked everything available for now.</p>
-        <button class="btn-primary" onclick="this.innerHTML='Syncing...'; this.disabled=true; typeof loadAllData === 'function' ? loadAllData() : window.location.reload();">Check for Updates</button>
-      </div>`;
+    if (subtitleEl) subtitleEl.textContent = `// 0 remaining`;
+
+    if (feedWrap) {
+      // 🎨 Dynamic HTML: Inject the banner ONLY if there are sleeping leads
+      const sleepingBannerHTML =
+        hiddenByTimezone > 0
+          ? `<div style="background: var(--blue-light, #e0e7ff); color: var(--blue-dark, #3730a3); padding: 10px 16px; border-radius: 8px; display: inline-block; margin-bottom: 24px; font-size: 14px; font-weight: 600;">
+             🌙 ${hiddenByTimezone} lead${hiddenByTimezone !== 1 ? "s" : ""} resting outside 8 AM - 8 PM dialing hours.
+           </div><br>`
+          : ``;
+
+      feedWrap.innerHTML = `
+        <div class="card" style="text-align:center; padding:60px 20px;">
+          <div style="font-size:4rem; margin-bottom:20px;">☕</div>
+          <h2 class="view-title">Queue Clear!</h2>
+          <p style="color:var(--text-3); margin-bottom:${hiddenByTimezone > 0 ? "16px" : "24px"};">Worked everything available for now.</p>
+          
+          ${sleepingBannerHTML}
+
+          <button class="btn-primary" onclick="this.innerHTML='Syncing...'; this.disabled=true; typeof loadAllData === 'function' ? loadAllData() : window.location.reload();">Check for Updates</button>
+        </div>`;
+    }
+
+    mainContent.appendChild(clone);
     return;
   }
 
   // ==========================================
-  //  THE RENDER LOGIC
+  //  THE RENDER LOGIC (If there are leads)
   // ==========================================
-  mainContent.innerHTML = "";
-  const contactsToday =
-    typeof getMyContactsToday === "function" ? getMyContactsToday() : 0;
-  const template = document.getElementById("tmpl-my-leads");
-  const clone = template.content.cloneNode(true);
+  if (subtitleEl) {
+    subtitleEl.textContent = `// ${myLeads.length} remaining · lead ${_currentFeedIndex + 1} of ${myLeads.length}`;
+  }
 
-  const textEl = clone.getElementById("myleads-contact-text");
-  if (textEl) textEl.textContent = contactsToday;
+  if (feedWrap) {
+    feedWrap.innerHTML = "";
+    feedWrap.appendChild(renderLeadFeedCard(myLeads));
+  }
 
-  clone.getElementById("myleads-subtitle").textContent =
-    `// ${myLeads.length} remaining · lead ${_currentFeedIndex + 1} of ${myLeads.length}`;
-
-  const feedWrap = clone.getElementById("lead-feed-wrap");
-  feedWrap.innerHTML = "";
-  feedWrap.appendChild(renderLeadFeedCard(myLeads));
   mainContent.appendChild(clone);
 
-  // Restart the local clock
   updateClock();
   if (window._clockTimer) clearInterval(window._clockTimer);
   window._clockTimer = setInterval(updateClock, 1000);
@@ -2381,7 +2361,7 @@ async function bulkAssignToSelectedAgent() {
 
   const unassigned = State.leads.filter(function (l) {
     // THE GHOST RECORD SHIELD
-    const isValidLead = l && l.id && (l.name || l.phone);
+    const isValidLead = l && l.id && (l.name || l.address);
 
     const isAvailable =
       !l.assignedTo && !Config.terminalStatuses.includes(l.status);
@@ -2847,7 +2827,19 @@ function renderLeads() {
   }
 
   // 5. Populate Bulk Bar Dropdowns
+  // ==========================================
+  // 5. Populate Bulk Bar Dropdowns
+  // ==========================================
   const bulkAssignSelect = clone.getElementById("bulk-assign-select");
+
+  // 🧹 THE UPGRADE: Inject an explicit Unassigned option first
+  const unassignOption = document.createElement("option");
+  unassignOption.value = ""; // Empty string clears the assignment when saved!
+  unassignOption.textContent = "-- Unassign Leads --";
+  unassignOption.style.fontStyle = "italic";
+  unassignOption.style.color = "#64748b"; // Gives it a slight greyed-out UI feel
+  bulkAssignSelect.appendChild(unassignOption);
+
   contractors.forEach((c) => {
     const option = document.createElement("option");
     option.value = c;
@@ -2958,6 +2950,24 @@ function renderLeads() {
       updateTable();
     });
 
+  const handleFilterChange = () => {
+    // 1. Update the global state with the new filter values
+    State.filters.search = searchInput ? searchInput.value : "";
+    State.filters.status = statusFilter ? statusFilter.value : "all";
+    State.filters.assignedTo = agentFilter ? agentFilter.value : "all";
+
+    // 2. Reset to page 1 (Crucial! If they are on page 5 and filter down to 10 total leads, it breaks without this)
+    currentPage = 1;
+
+    // 3. Force the UI to draw using the 50-item limit
+    updateTable();
+  };
+
+  // Wire up the inputs to the interceptor
+  // Using 'input' for search means it filters live on every keystroke!
+  if (searchInput) searchInput.addEventListener("input", handleFilterChange);
+  if (statusFilter) statusFilter.addEventListener("change", handleFilterChange);
+  if (agentFilter) agentFilter.addEventListener("change", handleFilterChange);
   // Initial draw before mounting
   updateTable();
 
@@ -3050,34 +3060,56 @@ async function bulkDelete() {
 
 async function bulkAssign() {
   const ids = Array.from(State.selectedLeads);
-  const agent = (document.getElementById("bulk-assign-select") || {}).value;
-  if (!ids.length) return;
-  if (!agent) {
-    UI.showToast("Please select an agent first.", "error");
+  const agentSelect = document.getElementById("bulk-assign-select");
+
+  // Safely grab the value. If the dropdown is missing, it falls back to undefined.
+  const agent = agentSelect ? agentSelect.value : undefined;
+
+  if (!ids.length) {
+    UI.showToast("Please select at least one lead first.", "warning");
     return;
   }
-  if (
-    !confirm(
-      "Assign " +
-        ids.length +
-        " lead" +
-        (ids.length !== 1 ? "s" : "") +
-        " to " +
-        agent +
-        "?",
-    )
-  )
+
+  // 🛡️ THE BOUNCER: Allow the empty string ("") to pass through!
+  if (agent === undefined || agent === null) {
+    UI.showToast("Please select an assignment option.", "error");
     return;
+  }
+
+  const isUnassigning = agent === "";
+  const actionWord = isUnassigning ? "Unassign" : "Assign";
+  const targetWord = isUnassigning ? "" : ` to ${agent}`;
+  const leadWord = ids.length === 1 ? "lead" : "leads";
+
+  // Dynamic popup: "Unassign 5 leads?" vs "Assign 5 leads to Michael?"
+  if (!confirm(`${actionWord} ${ids.length} ${leadWord}${targetWord}?`)) {
+    return;
+  }
+
   setLoading(true);
   try {
-    for (var i = 0; i < ids.length; i++) {
-      await Graph.assignAgent(ids[i], agent);
-    }
-    UI.showToast("Assigned " + ids.length + " leads to " + agent, "success");
+    // 🚀 THE UPGRADE: Promise.all processes the entire batch concurrently instead of one-by-one
+    await Promise.all(
+      ids.map(async (id) => {
+        // Pass null to SharePoint if unassigning, otherwise pass the agent's name
+        const targetAgent = isUnassigning ? null : agent;
+        await Graph.assignAgent(id, targetAgent);
+      }),
+    );
+
+    const successAction = isUnassigning ? "Unassigned" : `Assigned to ${agent}`;
+    UI.showToast(
+      `Successfully ${successAction}: ${ids.length} ${leadWord}!`,
+      "success",
+    );
+
     State.selectedLeads.clear();
+
+    // Refresh the local UI state
     await loadAllData();
     renderLeads();
   } catch (err) {
+    console.error("Bulk Assign Error:", err);
     UI.showToast("Failed: " + err.message, "error");
   } finally {
     setLoading(false);
@@ -3086,34 +3118,46 @@ async function bulkAssign() {
 
 async function bulkAssignType() {
   const ids = Array.from(State.selectedLeads);
-  const type = (document.getElementById("bulk-type-select") || {}).value;
-  if (!ids.length) return;
+  const typeSelect = document.getElementById("bulk-type-select");
+
+  // Safely grab the value in case the DOM element is missing
+  const type = typeSelect ? typeSelect.value : undefined;
+
+  if (!ids.length) {
+    UI.showToast("Please select at least one lead first.", "warning");
+    return;
+  }
+
   if (!type) {
     UI.showToast("Please select a lead type first.", "error");
     return;
   }
-  if (
-    !confirm(
-      'Set type to "' +
-        type +
-        '" for ' +
-        ids.length +
-        " lead" +
-        (ids.length !== 1 ? "s" : "") +
-        "?",
-    )
-  )
+
+  const leadWord = ids.length === 1 ? "lead" : "leads";
+
+  if (!confirm(`Set type to "${type}" for ${ids.length} ${leadWord}?`)) {
     return;
+  }
+
   setLoading(true);
   try {
-    for (var i = 0; i < ids.length; i++) {
-      await Graph.updateLead(ids[i], { Lead_x0020_Type: type });
-    }
-    UI.showToast("Set " + ids.length + " leads to type: " + type, "success");
+    // 🚀 THE UPGRADE: Promise.all blasts these requests out simultaneously
+    await Promise.all(
+      ids.map(async (id) => {
+        await Graph.updateLead(id, { Lead_x0020_Type: type });
+      }),
+    );
+
+    UI.showToast(
+      `Successfully set ${ids.length} ${leadWord} to type: ${type}!`,
+      "success",
+    );
+
     State.selectedLeads.clear();
     await loadAllData();
     renderLeads();
   } catch (err) {
+    console.error("Bulk Type Assign Error:", err);
     UI.showToast("Failed: " + err.message, "error");
   } finally {
     setLoading(false);
@@ -3122,41 +3166,64 @@ async function bulkAssignType() {
 
 function bulkExportSelected() {
   const ids = Array.from(State.selectedLeads);
-  const leads = State.leads.filter(function (l) {
-    return ids.includes(l.id);
-  });
+  const leads = State.leads.filter((l) => ids.includes(l.id));
+
   if (!leads.length) return;
+
   const today = new Date().toISOString().slice(0, 10);
-  const csv = [
-    "Name,Type,Email,Phone,Status,Source,Assigned To,MRC,Current Products,Last Contacted,Notes",
-  ]
+
+  // 📝 THE UPGRADE: Stripped Email, added BTN & CBR
+  const headers = [
+    "Name",
+    "Type",
+    "BTN",
+    "CBR",
+    "Status",
+    "Source",
+    "Assigned To",
+    "MRC",
+    "Current Products",
+    "Last Contacted",
+    "Notes",
+  ];
+
+  const csv = [headers.join(",")]
     .concat(
-      leads.map(function (l) {
+      leads.map((l) => {
+        // 🛡️ Safe fallbacks to catch any capitalization quirks
+        const btn = l.BTN || l.btn || l.phone || "";
+        const cbr = l.CBR || l.cbr || l.altPhone || "";
+        const mrc = l.currentMRC || l.mrc || "";
+        const products = l.currentProducts || l.products || "";
+
         return [
           l.name,
           l.leadType,
-          l.email,
-          l.phone,
+          btn,
+          cbr,
           l.status,
           l.source,
           l.assignedTo,
-          l.currentMRC,
-          l.currentProducts,
+          mrc,
+          products,
           l.lastContacted,
           l.notes,
         ]
-          .map(function (v) {
-            return '"' + String(v || "").replace(/"/g, '""') + '"';
-          })
+          .map((v) => '"' + String(v || "").replace(/"/g, '""') + '"')
           .join(",");
       }),
     )
     .join("\n");
+
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = "raimak-leads-selected-" + today + ".csv";
+  a.download = `raimak-leads-selected-${today}.csv`;
   a.click();
-  UI.showToast("Exported " + leads.length + " leads!", "success");
+
+  // 🧹 Clean up the local memory blob
+  URL.revokeObjectURL(a.href);
+
+  UI.showToast(`Exported ${leads.length} leads!`, "success");
 }
 
 function getFilteredLeads() {
@@ -4128,7 +4195,6 @@ function renderActivity() {
   const dateSort = document.getElementById("sort-date");
   const metaCount = document.getElementById("activity-meta-count");
 
-  // Date filter pointers
   const dateToggle = document.getElementById("toggle-date-filter");
   const dateContainer = document.getElementById("date-inputs-container");
   const startDateFilter = document.getElementById("filter-start-date");
@@ -4202,18 +4268,123 @@ function renderActivity() {
       return;
     }
 
+    // 🚀 THE UPGRADE: Inject the raw array index and add a pointer cursor
     tbody.innerHTML = displayLog
       .map(function (e) {
+        const rawIndex = activityLog.indexOf(e);
         return `
-        <tr>
+        <tr data-raw-index="${rawIndex}" style="cursor: pointer; transition: background 0.1s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='transparent'">
           <td class="td-mono">${formatDateTime(e.timestamp)}</td>
           <td>${escHtml(e.leadName || e.leadId || "—")}</td>
           <td><span class="action-badge">${escHtml(e.action || "—")}</span></td>
           <td>${escHtml(getCleanAgentName(e.agent) || "—")}</td>
-          <td class="td-notes">${escHtml(e.notes || "")}</td>
+          <td class="td-notes" style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escHtml(e.notes || "")}</td>
         </tr>`;
       })
       .join("");
+  }
+
+  // ==========================================
+  // 🔍 THE MODAL LOGIC & TIME CALCULATOR
+  // ==========================================
+  function showActivityModal(rawIndex) {
+    const entry = activityLog[rawIndex];
+    if (!entry) return;
+
+    const currentAgent = getCleanAgentName(entry.agent);
+
+    // Grab all logs for this specific agent and sort newest -> oldest
+    const agentLogs = activityLog
+      .filter((e) => getCleanAgentName(e.agent) === currentAgent)
+      .sort(
+        (a, b) =>
+          new Date(b.timestamp || 0).getTime() -
+          new Date(a.timestamp || 0).getTime(),
+      );
+
+    const entryIndex = agentLogs.indexOf(entry);
+    let timeSinceLast = "— (First logged action)";
+
+    // If it's not their oldest action, look at the NEXT older item in their array
+    if (entryIndex < agentLogs.length - 1) {
+      const previousEntry = agentLogs[entryIndex + 1];
+      const diffMs =
+        new Date(entry.timestamp || 0).getTime() -
+        new Date(previousEntry.timestamp || 0).getTime();
+
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffSecs = Math.floor((diffMs % 60000) / 1000);
+
+      if (diffMins > 60) {
+        const diffHours = Math.floor(diffMins / 60);
+        const remainMins = diffMins % 60;
+        timeSinceLast = `${diffHours}h ${remainMins}m since last action`;
+      } else {
+        timeSinceLast = `${diffMins}m ${diffSecs}s since last action`;
+      }
+    }
+
+    // Build and inject the modal
+    const overlay = document.createElement("div");
+    overlay.style.cssText =
+      "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(13, 27, 62, 0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter: blur(3px);";
+
+    const modal = document.createElement("div");
+    // 🛡️ THE FIX: Re-applying dark text color to ensure readability
+    modal.style.cssText =
+      "background:#fff; padding:24px; border-radius:12px; width:450px; max-width:90vw; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:16px; color:#0D1B3E;";
+
+    modal.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; border-bottom:1px solid #e2e8f0; padding-bottom:12px;">
+        <div>
+          <h3 style="margin:0 0 4px 0; font-size:18px; color:#0D1B3E;">Action: ${escHtml(entry.action || "Unknown")}</h3>
+          <p style="margin:0; font-size:13px; color:#64748b; font-family:var(--font-mono);">${formatDateTime(entry.timestamp)}</p>
+        </div>
+        <button id="closeModalBtn" style="background:none; border:none; font-size:20px; cursor:pointer; color:#94a3b8;">&times;</button>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; font-size:14px; color:#0D1B3E;">
+        <div>
+          <span style="color:#64748b; font-size:12px; text-transform:uppercase; font-weight:600;">Agent</span>
+          <div style="font-weight:500;">${escHtml(currentAgent)}</div>
+        </div>
+        <div>
+          <span style="color:#64748b; font-size:12px; text-transform:uppercase; font-weight:600;">Lead Info</span>
+          <div style="font-weight:500;">${escHtml(entry.leadName || entry.leadId || "—")}</div>
+        </div>
+      </div>
+
+      <div style="background:#f1f5f9; border-radius:6px; padding:12px;">
+        <span style="color:#64748b; font-size:12px; text-transform:uppercase; font-weight:600;">Pacing Metric</span>
+        <div style="font-family:var(--font-mono); font-size:13px; margin-top:4px; color:#3b82f6; font-weight:600;">
+          ⏱️ ${timeSinceLast}
+        </div>
+      </div>
+
+      <div>
+        <span style="color:#64748b; font-size:12px; text-transform:uppercase; font-weight:600;">Full Note</span>
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; margin-top:4px; font-size:14px; min-height:80px; white-space:pre-wrap; line-height:1.5; color:#1a1a1a;">${escHtml(entry.notes || "No notes provided.")}</div>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Close logic
+    const closeIt = () => overlay.remove();
+    document.getElementById("closeModalBtn").onclick = closeIt;
+    overlay.onclick = (e) => {
+      if (e.target === overlay) closeIt();
+    };
+  }
+
+  // Bind the delegated listener to the table body
+  if (tbody) {
+    tbody.addEventListener("click", (e) => {
+      const tr = e.target.closest("tr");
+      if (!tr || !tr.dataset.rawIndex) return;
+      showActivityModal(parseInt(tr.dataset.rawIndex, 10));
+    });
   }
 
   // Attach Event Listeners
@@ -4261,17 +4432,14 @@ function renderActivity() {
   if (dateToggle) {
     dateToggle.addEventListener("change", (e) => {
       if (e.target.checked) {
-        // Slide open to the left
         dateContainer.style.maxWidth = "350px";
         dateContainer.style.opacity = "1";
         dateContainer.style.pointerEvents = "auto";
       } else {
-        // Slide closed to the right
         dateContainer.style.maxWidth = "0px";
         dateContainer.style.opacity = "0";
         dateContainer.style.pointerEvents = "none";
 
-        // Clear values and reset table
         if (startDateFilter) startDateFilter.value = "";
         if (endDateFilter) endDateFilter.value = "";
         currentPage = 1;
@@ -4302,66 +4470,112 @@ function renderStats() {
   const agentSelect = document.getElementById("stats-agent-select");
   const timeframeSelect = document.getElementById("stats-timeframe-select");
 
-  // 🎛️ Setup Event Listeners
   const refreshData = () => {
+    // Now grabs 'all' if selected, otherwise target email
     const targetEmail =
       isAdmin() && agentSelect.value ? agentSelect.value : currentUser.email;
     const timeframe = timeframeSelect.value;
     paintStats(targetEmail, timeframe);
   };
 
-  // Listen to the Timeframe dropdown
   timeframeSelect.addEventListener("change", refreshData);
 
   if (isAdmin()) {
-    adminControls.style.display = "block";
+    adminControls.style.display = "flex";
+
+    // 🌟 THE FIX: Inject the "All Agents" option first
+    const allOption = document.createElement("option");
+    allOption.value = "all";
+    allOption.textContent = "-- All Agents (Floor Total) --";
+    agentSelect.appendChild(allOption);
 
     const agents = (State.agentScores || [])
       .map((s) => ({
-        name: s.AgentName,
-        email: s.AgentEmail,
+        name: s.AgentName || "Unknown",
+        email: s.AgentEmail || "",
       }))
+      .filter((a) => a.email !== "")
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    const seenEmails = new Set();
+
     agents.forEach((agent) => {
+      const safeEmail = agent.email.toLowerCase().trim();
+      if (seenEmails.has(safeEmail)) return;
+      seenEmails.add(safeEmail);
+
       const option = document.createElement("option");
       option.value = agent.email;
       option.textContent = agent.name;
-      if (agent.email.toLowerCase() === currentUser.email.toLowerCase()) {
+
+      // Select the current user by default so they see their own stats first
+      if (safeEmail === currentUser.email.toLowerCase().trim()) {
         option.selected = true;
       }
       agentSelect.appendChild(option);
     });
 
-    // Listen to the Admin dropdown
     agentSelect.addEventListener("change", refreshData);
   }
 
-  // 🚀 Initial Paint
   refreshData();
 }
 
 function paintStats(email, timeframe) {
   const stats = getAgentStats(email, timeframe);
 
-  // 1. Update the Dynamic Labels
   let timeLabel = "(Today)";
   if (timeframe === "week") timeLabel = "(Past 7 Days)";
   if (timeframe === "month") timeLabel = "(Past 30 Days)";
   if (timeframe === "all") timeLabel = "(All Time)";
 
-  document.getElementById("label-sales").textContent = `Sales ${timeLabel}`;
-  document.getElementById("label-touches").textContent =
-    `Leads Touched ${timeLabel}`;
-  document.getElementById("label-conversion").textContent =
-    `Close Rate ${timeLabel}`;
+  let salesSubtext = "";
+  let touchesSubtext = "";
+  let rateSubtext = "";
 
-  // 2. The Animation Helper
+  if (email === "all" && stats.leaderboard && stats.leaderboard.length > 0) {
+    const topSales = [...stats.leaderboard].sort(
+      (a, b) => b.sales - a.sales,
+    )[0];
+    const topTouches = [...stats.leaderboard].sort(
+      (a, b) => b.touches - a.touches,
+    )[0];
+
+    // 🛡️ THE TROPHY THRESHOLD: Require at least 5 touches to win the Close Rate award
+    const eligibleForRate = stats.leaderboard.filter((a) => a.touches >= 5);
+    const topRate =
+      eligibleForRate.length > 0
+        ? eligibleForRate.sort((a, b) => b.rate - a.rate)[0]
+        : null;
+
+    if (topSales && topSales.sales > 0) {
+      salesSubtext = `<br><span style="font-size:12px; font-weight:600; color:#10b981;">🏆 Top: ${escHtml(topSales.name)} (${topSales.sales})</span>`;
+    }
+    if (topTouches && topTouches.touches > 0) {
+      touchesSubtext = `<br><span style="font-size:12px; font-weight:600; color:#f59e0b;">🔥 Top: ${escHtml(topTouches.name)} (${topTouches.touches})</span>`;
+    }
+    if (topRate && topRate.rate > 0) {
+      rateSubtext = `<br><span style="font-size:12px; font-weight:600; color:#8b5cf6;">🎯 Top: ${escHtml(topRate.name)} (${topRate.rate}%)</span>`;
+    }
+  } else if (
+    email !== "all" &&
+    timeframe === "day" &&
+    stats.personalBestSales > 0
+  ) {
+    salesSubtext = `<br><span style="font-size:12px; font-weight:600; color:#8b5cf6;">⭐ Record: ${stats.personalBestSales} (${stats.personalBestDate})</span>`;
+  }
+
+  document.getElementById("label-sales").innerHTML =
+    `Sales ${timeLabel} ${salesSubtext}`;
+  document.getElementById("label-touches").innerHTML =
+    `Leads Touched ${timeLabel} ${touchesSubtext}`;
+  document.getElementById("label-conversion").innerHTML =
+    `Close Rate ${timeLabel} ${rateSubtext}`;
+
   const animateValue = (id, endVal, isPercent = false) => {
     const obj = document.getElementById(id);
     if (!obj) return;
 
-    // Safety check in case endVal is somehow NaN
     if (
       endVal === undefined ||
       endVal === null ||
@@ -4392,17 +4606,13 @@ function paintStats(email, timeframe) {
     window.requestAnimationFrame(step);
   };
 
-  // 3. Trigger Core Animations
   animateValue("stat-sales-timeframe", stats.salesTimeframe);
   animateValue("stat-touches-timeframe", stats.uniqueLeadsTimeframe);
   animateValue("stat-sales-total", stats.salesTotal);
   animateValue("stat-conversion", stats.conversionRate, true);
 
-  // Static update for the small Actions text
   document.getElementById("stat-actions-timeframe").textContent =
     stats.touchesTimeframe;
-
-  // 4. Trigger Advanced Metric Animations
   animateValue("stat-current-points", stats.currentPoints);
 
   if (timeframe === "day") {
@@ -4412,7 +4622,7 @@ function paintStats(email, timeframe) {
   }
 
   // ==========================================
-  // 5. CHART GENERATION LOGIC
+  // CHART GENERATION LOGIC
   // ==========================================
   const chartsContainer = document.getElementById("stats-charts-container");
 
@@ -4420,7 +4630,6 @@ function paintStats(email, timeframe) {
     chartsContainer.style.display = "none";
   } else {
     chartsContainer.style.display = "block";
-
     window._chartInstances = window._chartInstances || {};
 
     const drawChart = (
@@ -4438,11 +4647,9 @@ function paintStats(email, timeframe) {
       if (!canvasEl) return;
 
       const ctx = canvasEl.getContext("2d");
-
-      // 🎨 THE UPGRADE: Dynamic Fading Gradients
       const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-      gradient.addColorStop(0, colorStr + "66"); // 40% opacity at the top
-      gradient.addColorStop(1, colorStr + "00"); // 0% opacity at the bottom
+      gradient.addColorStop(0, colorStr + "66");
+      gradient.addColorStop(1, colorStr + "00");
 
       window._chartInstances[canvasId] = new Chart(ctx, {
         type: "line",
@@ -4453,15 +4660,15 @@ function paintStats(email, timeframe) {
               label: title,
               data: dataArray,
               borderColor: colorStr,
-              backgroundColor: gradient, // 🚀 Apply the gradient here
+              backgroundColor: gradient,
               borderWidth: 3,
               fill: true,
-              pointBackgroundColor: "#ffffff", // White dots with colored borders
+              pointBackgroundColor: "#ffffff",
               pointBorderColor: colorStr,
               pointBorderWidth: 2,
               pointRadius: 4,
               pointHoverRadius: 6,
-              tension: 0.4, // Extra smooth Bezier curves
+              tension: 0.4,
             },
           ],
         },
@@ -4500,15 +4707,78 @@ function paintStats(email, timeframe) {
       true,
     );
   }
+
+  // ==========================================
+  // LEADERBOARD INJECTION LOGIC
+  // ==========================================
+  let lbContainer = document.getElementById("stats-leaderboard-card");
+
+  if (!lbContainer) {
+    lbContainer = document.createElement("div");
+    lbContainer.id = "stats-leaderboard-card";
+    lbContainer.className = "card";
+    lbContainer.style.marginTop = "24px";
+
+    if (chartsContainer) {
+      chartsContainer.parentNode.insertBefore(
+        lbContainer,
+        chartsContainer.nextSibling,
+      );
+    } else {
+      document.getElementById("main-content").appendChild(lbContainer);
+    }
+  }
+
+  if (email !== "all" || !stats.leaderboard || stats.leaderboard.length === 0) {
+    lbContainer.style.display = "none";
+  } else {
+    lbContainer.style.display = "block";
+    const topPerformers = stats.leaderboard.slice(0, 5);
+
+    lbContainer.innerHTML = `
+      <div class="card-header">
+        <h2 class="card-title">Top Performers ${timeLabel}</h2>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 60px;">Rank</th>
+              <th>Agent</th>
+              <th>Sales</th>
+              <th>Leads Touched</th>
+              <th>Close Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${topPerformers
+              .map((agent, index) => {
+                const rankDisplay = index === 0 ? "🏆 1" : index + 1;
+                return `
+              <tr>
+                <td><span class="top5-rank rank-${index + 1}">${rankDisplay}</span></td>
+                <td style="font-weight: 600; color: #0D1B3E;">${escHtml(agent.name)}</td>
+                <td style="color: #10b981; font-weight: bold;">${agent.sales}</td>
+                <td class="td-mono">${agent.touches}</td>
+                <td style="color: #8b5cf6; font-weight: 600;">${agent.rate}%</td>
+              </tr>
+            `;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
 }
 
 function getAgentStats(targetEmail, timeframe = "day") {
   const target = targetEmail.toLowerCase().trim();
-  const now = Date.now();
+  const isAllAgents = target === "all";
 
+  const now = Date.now();
   let startMs = 0;
 
-  // 🕰️ Calculate the Time Boundary
   if (timeframe === "day") {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -4523,27 +4793,66 @@ function getAgentStats(targetEmail, timeframe = "day") {
   let salesTotal = 0;
   let touchesTimeframe = 0;
   let uniqueLeadsTouchedTimeframe = new Set();
-  let dailyMap = {}; // 📈 Tracks day-by-day stats for the charts
 
-  // 1. Sweep the Activity Log
+  let uniqueSalesTotal = new Set();
+  let uniqueSalesTimeframe = new Set();
+  let seenDailyActions = new Set();
+
+  let dailyMap = {};
+  let agentMap = {};
+
   (State.activityLog || []).forEach((log) => {
-    // 🩹 Name-to-Email Converter
-    let rawAgentString = (log.agentEmail || log.agent || "")
-      .toLowerCase()
-      .trim();
-    if (rawAgentString && !rawAgentString.includes("@")) {
-      const nameParts = rawAgentString.split(/\s+/);
-      if (nameParts.length >= 2) {
-        const firstInitial = nameParts[0][0];
-        const lastName = nameParts[nameParts.length - 1];
-        rawAgentString = `${firstInitial}.${lastName}@raimak.com`;
+    let cleanRaw = (log.agentEmail || log.agent || "").toLowerCase().trim();
+    if (!cleanRaw) return;
+
+    // 🛑 THE IDENTITY RESOLVER: Match raw logs to official contractors
+    const aliasMap = {
+      "everett henry": "h.gatlin@raimak.com",
+      "julian torres": "j.torres@raimak.com",
+      "tory mathis": "t.mathis@raimak.com",
+      "stephanie balleste": "s.balleste@raimak.com",
+      "brianna woodall": "b.woodall@raimak.com",
+      // You can easily add any future rogue names right here!
+    };
+
+    if (aliasMap[cleanRaw]) {
+      cleanRaw = aliasMap[cleanRaw];
+    }
+
+    let finalEmail = cleanRaw;
+    let knownName = "";
+
+    // ... (the rest of the matching logic stays exactly the same)
+
+    const matchedContractor = (State.contractors || []).find(
+      (c) =>
+        (c.email || "").toLowerCase().trim() === cleanRaw ||
+        (c.name || "").toLowerCase().trim() === cleanRaw,
+    );
+
+    if (matchedContractor) {
+      finalEmail = (matchedContractor.email || finalEmail).toLowerCase().trim();
+      knownName = matchedContractor.name;
+    } else {
+      // Fallback formatters if they somehow aren't in the contractor list
+      if (!cleanRaw.includes("@")) {
+        const parts = cleanRaw.split(/\s+/);
+        if (parts.length >= 2)
+          finalEmail = `${parts[0][0]}.${parts[parts.length - 1]}@raimak.com`;
+        knownName = cleanRaw.replace(
+          /\w\S*/g,
+          (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase(),
+        );
+      } else {
+        const prefix = cleanRaw.split("@")[0].split(".");
+        knownName = prefix
+          .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+          .join(" ");
       }
     }
 
-    const logEmail = rawAgentString;
-    if (logEmail !== target) return;
-
-    // 🛑 Noise Filter: Only count actual status updates
+    const logEmail = finalEmail;
+    if (!isAllAgents && logEmail !== target) return;
     if (!log.action || !log.action.includes("Status:")) return;
 
     const logMs =
@@ -4554,7 +4863,6 @@ function getAgentStats(targetEmail, timeframe = "day") {
 
     const isInTimeframe = logMs >= startMs;
 
-    // 📈 Generate a Date Key (e.g., "5/14")
     let dateKey = "";
     if (isInTimeframe) {
       const d = new Date(logMs);
@@ -4567,34 +4875,54 @@ function getAgentStats(targetEmail, timeframe = "day") {
           timestamp: d.setHours(0, 0, 0, 0),
         };
       }
+
+      if (isAllAgents && !agentMap[logEmail]) {
+        agentMap[logEmail] = {
+          name: knownName || log.agentName || logEmail,
+          sales: 0,
+          uniqueLeads: new Set(),
+        };
+      }
     }
+
+    const trueLeadId = log.leadId || log.LeadId || log.LeadID;
+    const fallbackName = log.leadName || log.Title || "Unknown";
+    const rawKey = trueLeadId || fallbackName;
+    const uniqueKey = String(rawKey).toLowerCase().trim();
+
+    if (!uniqueKey || uniqueKey === "unknown") return;
+
+    const dedupeKey = `${uniqueKey}-${log.action}-${dateKey}`;
+    if (seenDailyActions.has(dedupeKey)) return;
+    seenDailyActions.add(dedupeKey);
 
     if (isInTimeframe) {
       touchesTimeframe++;
+      uniqueLeadsTouchedTimeframe.add(uniqueKey);
+      if (dateKey) dailyMap[dateKey].uniqueLeads.add(uniqueKey);
 
-      const trueLeadId = log.leadId || log.LeadId || log.LeadID;
-      const fallbackName = log.leadName || log.Title || "Unknown";
-
-      // 🛡️ Data-Type Crusher (Prevents duplicates)
-      const rawKey = trueLeadId || fallbackName;
-      const uniqueKey = String(rawKey).toLowerCase().trim();
-
-      if (uniqueKey && uniqueKey !== "unknown") {
-        uniqueLeadsTouchedTimeframe.add(uniqueKey);
-        if (dateKey) dailyMap[dateKey].uniqueLeads.add(uniqueKey); // Track Daily Unique Touches
+      if (isAllAgents && agentMap[logEmail]) {
+        agentMap[logEmail].uniqueLeads.add(uniqueKey);
       }
     }
 
     if (log.action.includes("Sold")) {
-      salesTotal++;
-      if (isInTimeframe) {
+      if (!uniqueSalesTotal.has(uniqueKey)) {
+        uniqueSalesTotal.add(uniqueKey);
+        salesTotal++;
+      }
+      if (isInTimeframe && !uniqueSalesTimeframe.has(uniqueKey)) {
+        uniqueSalesTimeframe.add(uniqueKey);
         salesTimeframe++;
-        if (dateKey) dailyMap[dateKey].sales++; // Track Daily Sales
+        if (dateKey) dailyMap[dateKey].sales++;
+
+        if (isAllAgents && agentMap[logEmail]) {
+          agentMap[logEmail].sales++;
+        }
       }
     }
   });
 
-  // 📈 Format the Trend Data for Chart.js
   const sortedDays = Object.values(dailyMap).sort(
     (a, b) => a.timestamp - b.timestamp,
   );
@@ -4605,7 +4933,6 @@ function getAgentStats(targetEmail, timeframe = "day") {
     trends.labels.push(`${d.getMonth() + 1}/${d.getDate()}`);
     trends.sales.push(day.sales);
     trends.touches.push(day.uniqueLeads.size);
-    // Protect against NaN by ensuring size > 0 before dividing
     trends.rates.push(
       day.uniqueLeads.size > 0
         ? parseFloat(((day.sales / day.uniqueLeads.size) * 100).toFixed(1))
@@ -4613,23 +4940,91 @@ function getAgentStats(targetEmail, timeframe = "day") {
     );
   });
 
-  // 🔬 CALCULATE ADVANCED METRICS
   const activeDays =
-    Object.keys(dailyMap).length > 0 ? Object.keys(dailyMap).length : 1; // Prevent dividing by zero
+    Object.keys(dailyMap).length > 0 ? Object.keys(dailyMap).length : 1;
   let totalDailyUniqueTouches = 0;
 
   Object.values(dailyMap).forEach((day) => {
     totalDailyUniqueTouches += day.uniqueLeads.size;
   });
 
-  // Math.round to keep the Pace number clean
   const avgDailyLeads = Math.round(totalDailyUniqueTouches / activeDays);
 
-  // Grab their Points from the gamification array
-  const scoreRow = (State.agentScores || []).find(
-    (s) => (s.AgentEmail || "").toLowerCase().trim() === target,
-  );
-  const currentPoints = scoreRow ? scoreRow.CurrentPoints : 0;
+  let currentPoints = 0;
+  if (isAllAgents) {
+    currentPoints = (State.agentScores || []).reduce(
+      (sum, s) => sum + (s.CurrentPoints || 0),
+      0,
+    );
+  } else {
+    const scoreRow = (State.agentScores || []).find(
+      (s) => (s.AgentEmail || "").toLowerCase().trim() === target,
+    );
+    currentPoints = scoreRow ? scoreRow.CurrentPoints : 0;
+  }
+
+  let leaderboard = [];
+  if (isAllAgents) {
+    leaderboard = Object.values(agentMap)
+      .map((a) => {
+        const touches = a.uniqueLeads.size;
+        const rate = touches > 0 ? ((a.sales / touches) * 100).toFixed(1) : 0;
+        return {
+          name: a.name,
+          sales: a.sales,
+          touches: touches,
+          rate: parseFloat(rate),
+        };
+      })
+      .sort((a, b) => b.sales - a.sales || b.rate - a.rate);
+  }
+
+  let personalBestSales = 0;
+  let personalBestDate = "";
+
+  if (!isAllAgents && timeframe === "day") {
+    const allTimeSalesMap = {};
+    const recordTracker = new Set();
+
+    (State.activityLog || []).forEach((log) => {
+      let rawAgent = (log.agentEmail || log.agent || "").toLowerCase().trim();
+      if (rawAgent && !rawAgent.includes("@")) {
+        const nameParts = rawAgent.split(/\s+/);
+        if (nameParts.length >= 2)
+          rawAgent = `${nameParts[0][0]}.${nameParts[nameParts.length - 1]}@raimak.com`;
+      }
+
+      if (rawAgent !== target || !log.action || !log.action.includes("Sold"))
+        return;
+
+      const logMs =
+        typeof log.timestamp === "number"
+          ? log.timestamp
+          : Date.parse(log.timestamp);
+      if (isNaN(logMs)) return;
+
+      const uniqueKey = String(
+        log.leadId || log.LeadId || log.leadName || log.Title || "unknown",
+      )
+        .toLowerCase()
+        .trim();
+      if (!uniqueKey || uniqueKey === "unknown") return;
+
+      const d = new Date(logMs);
+      const dateKey = `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+      const dedupeKey = `${uniqueKey}-${dateKey}`;
+
+      if (!recordTracker.has(dedupeKey)) {
+        recordTracker.add(dedupeKey);
+        allTimeSalesMap[dateKey] = (allTimeSalesMap[dateKey] || 0) + 1;
+
+        if (allTimeSalesMap[dateKey] > personalBestSales) {
+          personalBestSales = allTimeSalesMap[dateKey];
+          personalBestDate = `${d.getMonth() + 1}/${d.getDate()}`;
+        }
+      }
+    });
+  }
 
   return {
     salesTimeframe,
@@ -4645,6 +5040,9 @@ function getAgentStats(targetEmail, timeframe = "day") {
     avgDailyLeads,
     currentPoints,
     trends,
+    leaderboard,
+    personalBestSales,
+    personalBestDate,
   };
 }
 
@@ -4958,11 +5356,14 @@ function updateBadges() {
 }
 
 async function exportD2DLeads() {
-  let workedBy1 = 0;
-  let workedBy2 = 0;
-  let workedBy3Plus = 0;
+  const groupA_Unassigned = [];
+  const groupB_Assigned = [];
 
-  const d2dLeads = (State.leads || []).filter((l) => {
+  (State.leads || []).forEach((l) => {
+    // 🛑 Skip leads that are already terminal (using your global Config) or ALREADY exported & flagged
+    if (l.Status && (Config.terminalStatuses || []).includes(l.Status)) return;
+    if (l.flaggedForExport === true || l.FlaggedForExport === true) return;
+
     let count = 0;
     if (Array.isArray(l.previousAgents)) {
       count = l.previousAgents.length;
@@ -4975,19 +5376,26 @@ async function exportD2DLeads() {
       count = parseInt(l.previousAgents) || 0;
     }
 
-    if (count === 1) workedBy1++;
-    else if (count === 2) workedBy2++;
-    else if (count >= 3) workedBy3Plus++;
-
     const isUnassigned = !l.assignedTo || l.assignedTo.trim() === "";
-    return count >= 3 && isUnassigned;
+
+    // 🎯 Group 1: Unassigned & 3+ touches
+    if (isUnassigned && count >= 3) {
+      groupA_Unassigned.push(l);
+    }
+    // 🎯 Group 2: Assigned & 5+ touches
+    else if (!isUnassigned && count >= 5) {
+      groupB_Assigned.push(l);
+    }
   });
 
-  if (d2dLeads.length === 0) {
+  const allExportLeads = [...groupA_Unassigned, ...groupB_Assigned];
+
+  if (allExportLeads.length === 0) {
     UI.showToast("No leads meet the criteria for D2D export.", "warning");
     return;
   }
 
+  // --- 📝 CSV GENERATION ---
   const headers = [
     "First Name",
     "Last Name",
@@ -4999,7 +5407,8 @@ async function exportD2DLeads() {
     "currentMRC",
     "currentProducts",
   ];
-  const rows = d2dLeads.map((l) => {
+
+  const rows = allExportLeads.map((l) => {
     const firstName = l.firstName || "";
     const lastName = l.lastName || "";
     const address = l.address || "";
@@ -5009,6 +5418,7 @@ async function exportD2DLeads() {
     const cbr = l.CBR || l.cbr || l.altPhone || "";
     const mrc = l.currentMRC || l.mrc || "";
     const products = l.currentProducts || l.products || "";
+
     return `"${firstName}","${lastName}","${address}","${city}","${state}","${btn}","${cbr}","${mrc}","${products}"`;
   });
 
@@ -5027,10 +5437,11 @@ async function exportD2DLeads() {
   URL.revokeObjectURL(url);
 
   UI.showToast(
-    `📁 File downloaded! Moving ${d2dLeads.length} leads to D2D status...`,
+    `📁 Exported ${allExportLeads.length} leads! (Unassigned: ${groupA_Unassigned.length}, Flagged: ${groupB_Assigned.length})`,
     "info",
   );
 
+  // --- 🔄 SHAREPOINT BATCH UPDATES ---
   const host = Config.sharePoint.hostname;
   const sitePath = Config.sharePoint.sites.team;
   const listId = Config.sharePoint.lists.leadsList;
@@ -5039,25 +5450,28 @@ async function exportD2DLeads() {
   const batchSize = 20;
   let updateCount = 0;
 
-  for (let i = 0; i < d2dLeads.length; i += batchSize) {
-    const chunk = d2dLeads.slice(i, i + batchSize);
+  for (let i = 0; i < allExportLeads.length; i += batchSize) {
+    const chunk = allExportLeads.slice(i, i + batchSize);
 
     const batchRequests = chunk.map((lead, index) => {
+      // Intelligently route the update payload based on which group the lead belongs to
+      const isGroupA = groupA_Unassigned.includes(lead);
+      const updateFields = isGroupA
+        ? { Status: "D2D Lead" }
+        : { FlaggedForExport: true }; // Flags the assigned leads silently
+
       return {
         id: String(index + 1),
         method: "PATCH",
         url: `/sites/${host}:/${sitePath}:/lists/${listId}/items/${lead.id}`,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "If-Match": "*" },
         body: {
-          fields: {
-            Status: "D2D Lead",
-          },
+          fields: updateFields,
         },
       };
     });
 
     try {
-      // 🚀 THE UPGRADE: Moving the batch call to the options object pattern
       await Graph.apiFetch(batchUrl, {
         method: "POST",
         body: { requests: batchRequests },
@@ -5069,7 +5483,7 @@ async function exportD2DLeads() {
   }
 
   UI.showToast(
-    `✅ Successfully locked ${updateCount} leads as D2D!`,
+    `✅ Successfully updated ${updateCount} leads in SharePoint!`,
     "success",
   );
   await loadAllData();
