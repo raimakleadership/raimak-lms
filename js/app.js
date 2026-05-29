@@ -1780,7 +1780,7 @@ async function agentSaveAll(leadId) {
     productsSelectEl.selectedIndex !== -1
   ) {
     products = productsSelectEl.options[productsSelectEl.selectedIndex].value;
-  } // 🚀 Grabbed
+  }
   const newNote = (document.getElementById("feed-notes") || {}).value || "";
   const cbr = (document.getElementById("feed-cbr") || {}).value || "";
   const btn = (document.getElementById("feed-btn") || {}).value || "";
@@ -1792,6 +1792,13 @@ async function agentSaveAll(leadId) {
   const soldByName = soldByEl ? soldByEl.value : "";
   let rawCallbackDate =
     (document.getElementById("f-callback-date") || {}).value || "";
+
+  // ==========================================
+  // 🛑 THE BOUNCER: Prevent saving as "New"
+  // ==========================================
+  if (newStatus === "New") {
+    return UI.showToast("Please update the lead status from 'New'.", "warning");
+  }
 
   // Validation (Terminal Bypass)
   const isTerminal = Config.terminalStatuses.includes(newStatus);
@@ -1838,7 +1845,7 @@ async function agentSaveAll(leadId) {
   };
 
   if (mrc) saveFields["MonthlyRecurringCharge_x0028_MRC"] = mrc;
-  if (products) saveFields["CurrentProducts"] = products; // 🚀 ADDED BACK
+  if (products) saveFields["CurrentProducts"] = products;
   if (cbr) saveFields["CBR"] = cbr;
   if (btn) saveFields["BTN"] = btn;
   if (autoPay) saveFields["AutoPay"] = autoPay;
@@ -1871,11 +1878,11 @@ async function agentSaveAll(leadId) {
       Graph.logActivity(logEntry),
     ]);
 
-    // 🚀 LOCAL STATE: Fixed leadName mapping
+    // LOCAL STATE: Fixed leadName mapping
     State.activityLog.push({
       id: "local-" + Date.now(),
       leadId: leadId,
-      leadName: lead.name || "Unknown Lead", // 🎯 FIXED PROPERTY NAME
+      leadName: lead.name || "Unknown Lead",
       agent: activityEmail,
       agentEmail: activityEmail,
       action: "Status: " + newStatus,
@@ -1887,7 +1894,7 @@ async function agentSaveAll(leadId) {
     lead.status = newStatus;
     lead.notes = notes;
     if (mrc) lead.currentMRC = mrc;
-    if (products) lead.currentProducts = products; // 🚀 ADDED BACK
+    if (products) lead.currentProducts = products;
     if (cbr) lead.cbr = cbr;
     if (btn) lead.btn = btn;
     if (autoPay) lead.autoPay = autoPay;
@@ -1919,7 +1926,7 @@ async function agentSaveAll(leadId) {
       setTimeout(() => {
         saveBtn.textContent = "Save";
         saveBtn.disabled = false;
-        saveBtn.style.background = ""; // Clears the inline green background
+        saveBtn.style.background = "";
         saveBtn.style.borderColor = "";
         saveBtn.style.cursor = "pointer";
       }, 2000);
@@ -2040,10 +2047,19 @@ function advanceToNextLead() {
     const isExhausted = currentLead.status === "3rd Contact";
     const inCoolOff = Graph.isInCoolOff(currentLead);
 
-    // 3. Only increment the index if the lead is staying in the active queue!
-    // If it's terminal, exhausted, cool-off, OR a dismissed callback,
-    // the Bouncer will remove it during renderMyLeads(), naturally sliding the next lead into this slot.
-    if (!isTerminal && !isExhausted && !inCoolOff && !isDismissedCallback) {
+    // 🛑 THE FIX: Did the agent literally JUST click the save button on this lead?
+    const justWorked =
+      window._sessionWorkedLeads &&
+      window._sessionWorkedLeads.has(currentLead.id);
+
+    // 3. Only increment the index if the lead is DEFINITELY staying in the active queue!
+    if (
+      !isTerminal &&
+      !isExhausted &&
+      !inCoolOff &&
+      !isDismissedCallback &&
+      !justWorked
+    ) {
       _currentFeedIndex++;
     }
   }
@@ -2063,7 +2079,7 @@ function renderAssignLeads() {
 
   const { leads, contractors } = State;
   const unassigned = leads.filter(function (l) {
-    const isValidLead = l && l.id && (l.name || l.phone);
+    const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
     const isAvailable =
       !l.assignedTo && !Config.terminalStatuses.includes(l.status);
     return isValidLead && isAvailable;
@@ -2088,6 +2104,62 @@ function renderAssignLeads() {
         .filter(Boolean),
     ),
   ].sort();
+
+  // ==========================================
+  // 🧠 THE BATCH CLUSTERER
+  // ==========================================
+  const batches = [];
+  let currentBatch = null;
+
+  const sortedForBatches = [...unassigned].sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return timeB - timeA;
+  });
+
+  let legacyCount = 0;
+
+  sortedForBatches.forEach((l) => {
+    if (!l.createdAt) {
+      l._batchId = "legacy";
+      legacyCount++;
+      return;
+    }
+
+    const lTime = new Date(l.createdAt).getTime();
+
+    if (!currentBatch) {
+      currentBatch = { time: lTime, count: 1 };
+      batches.push(currentBatch);
+    } else {
+      const diffMinutes = Math.abs(currentBatch.time - lTime) / 60000;
+      if (diffMinutes <= 30) {
+        currentBatch.count++;
+      } else {
+        currentBatch = { time: lTime, count: 1 };
+        batches.push(currentBatch);
+      }
+    }
+    l._batchId = currentBatch.time.toString();
+  });
+
+  const batchOptionsHTML = batches
+    .map((b) => {
+      const d = new Date(b.time);
+      const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+      const timeStr = d.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const label = `${dateStr} @ ${timeStr} (${b.count} leads)`;
+      return `<option value="${b.time}">${escHtml(label)}</option>`;
+    })
+    .join("");
+
+  const legacyHTML =
+    legacyCount > 0
+      ? `<option value="legacy">Legacy / Unknown Date (${legacyCount} leads)</option>`
+      : "";
 
   document.getElementById("main-content").innerHTML = `
     <div class="view-header">
@@ -2116,7 +2188,20 @@ function renderAssignLeads() {
           ${contractors.map((c) => `<option value="${escHtml(c.name)}">${escHtml(c.name)} (${agentCounts[c.name]} assigned)</option>`).join("")}
         </select>
 
-        <div style="display:flex; align-items:center; gap:8px;">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          
+          <select id="bulk-batch-select" class="form-input" style="width: 160px; padding-right: 24px;">
+            <option value="all">Any Batch</option>
+            ${batchOptionsHTML}
+            ${legacyHTML}
+          </select>
+
+          <select id="bulk-sort-select" class="form-input" style="width: 150px; padding-right: 24px;">
+            <option value="newest">Sort: Newest First</option>
+            <option value="least_worked">Sort: Least Worked</option>
+            <option value="most_worked">Sort: Most Worked</option>
+          </select>
+
           <select id="bulk-type-select" class="form-input" style="width: 120px; padding-right: 24px;">
             <option value="all">Any Type</option>
             ${(Config.leadTypes || []).map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join("")}
@@ -2160,7 +2245,7 @@ function renderAssignLeads() {
       
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Type</th><th>Phone</th><th>Status</th><th style="text-align: right;">Assign To</th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>BTN</th><th>Status</th><th style="text-align: right;">Assign To</th></tr></thead>
           <tbody id="assign-tbody">
             </tbody>
         </table>
@@ -2170,10 +2255,12 @@ function renderAssignLeads() {
 
   // 3. Internal State & DOM Pointers
   let currentPage = 1;
-  const itemsPerPage = 25; // Change this if you ever want more/less per page!
+  const itemsPerPage = 25;
   const unworkedCheck = document.getElementById("bulk-unworked-check");
   const typeSelect = document.getElementById("bulk-type-select");
   const stateSelect = document.getElementById("bulk-state-select");
+  const batchSelect = document.getElementById("bulk-batch-select");
+  const sortSelect = document.getElementById("bulk-sort-select"); // 🚀 NEW POINTER
   const qtyInput = document.getElementById("bulk-agent-qty");
   const countDisplay = document.getElementById("bulk-type-count");
 
@@ -2187,22 +2274,53 @@ function renderAssignLeads() {
   function updateTableAndMath() {
     const selectedType = typeSelect ? typeSelect.value : "all";
     const selectedState = stateSelect ? stateSelect.value : "all";
+    const selectedBatch = batchSelect ? batchSelect.value : "all";
+    const selectedSort = sortSelect ? sortSelect.value : "newest"; // 🚀 GET SORT VALUE
     const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
 
-    // Filter master pool based on dropdowns AND checkbox
+    // 4A. FILTER THE LEADS
     const filteredLeads = unassigned.filter(function (l) {
       const typeMatch =
         selectedType === "all" ||
         (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
+
       const stateMatch =
         selectedState === "all" ||
         (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
 
-      // THE UPGRADE: Must have NO previous agents AND NO MRC value
+      const batchMatch =
+        selectedBatch === "all" || l._batchId === selectedBatch;
+
       const unworkedMatch =
         !requireUnworked || (!l.previousAgents && !l.currentMRC);
 
-      return typeMatch && stateMatch && unworkedMatch;
+      return typeMatch && stateMatch && batchMatch && unworkedMatch;
+    });
+
+    // 4B. SORT THE LEADS 🚀
+    filteredLeads.sort((a, b) => {
+      // Safely calculate how many agents have touched each lead
+      const countA = a.previousAgents
+        ? a.previousAgents.split(",").filter((x) => x.trim()).length
+        : 0;
+      const countB = b.previousAgents
+        ? b.previousAgents.split(",").filter((x) => x.trim()).length
+        : 0;
+
+      if (selectedSort === "least_worked") {
+        return (
+          countA - countB ||
+          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        );
+      } else if (selectedSort === "most_worked") {
+        return (
+          countB - countA ||
+          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        );
+      } else {
+        // Default: Newest first
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      }
     });
 
     // Update Bulk Assign max math
@@ -2213,12 +2331,10 @@ function renderAssignLeads() {
       if (parseInt(qtyInput.value, 10) > total) qtyInput.value = total;
     }
 
-    // Calculate Pagination Math
     const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
     if (currentPage > totalPages) currentPage = totalPages;
     if (currentPage < 1) currentPage = 1;
 
-    // Update UI text and button disabled states
     pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
     tableMetaCount.textContent = `Showing ${total} leads matching filters`;
 
@@ -2228,7 +2344,6 @@ function renderAssignLeads() {
     nextBtn.disabled = currentPage === totalPages;
     nextBtn.style.opacity = currentPage === totalPages ? "0.4" : "1";
 
-    // Slice for the current page and Draw HTML
     const startIndex = (currentPage - 1) * itemsPerPage;
     const displayLeads = filteredLeads.slice(
       startIndex,
@@ -2242,12 +2357,28 @@ function renderAssignLeads() {
 
     tbody.innerHTML = displayLeads
       .map(function (lead) {
+        const prevArray = lead.previousAgents
+          ? lead.previousAgents.split(",").filter((a) => a.trim() !== "")
+          : [];
+        const prevCount = prevArray.length;
+        const prevBadge =
+          prevCount > 0
+            ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; white-space:nowrap; cursor:help;">↺ ${prevCount} prev agent${prevCount > 1 ? "s" : ""}</span>`
+            : "";
+
+        const btnDisplay = lead.BTN || lead.btn || lead.phone || "—";
+
         return `
         <tr>
-          <td><span class="lead-name">${escHtml(lead.name)}</span></td>
+          <td>
+            <div style="display:flex; align-items:center;">
+              <span class="lead-name">${escHtml(lead.name)}</span>
+              ${prevBadge}
+            </div>
+          </td>
           
           <td>${lead.leadType ? `<span class="lead-type-badge lead-type-${(lead.leadType || "").toLowerCase()}">${escHtml(lead.leadType)}</span>` : "—"}</td>
-          <td class="td-mono">${escHtml(lead.phone)}</td>
+          <td class="td-mono">${escHtml(btnDisplay)}</td>
           <td><span class="status-badge status-${lead.status
             .toLowerCase()
             .replace(/\s+/g, "-")
@@ -2274,34 +2405,52 @@ function renderAssignLeads() {
   }
 
   // 5. Attach Event Listeners
-  if (unworkedCheck)
+  if (unworkedCheck) {
     unworkedCheck.addEventListener("change", () => {
       currentPage = 1;
       updateTableAndMath();
     });
-  if (typeSelect)
+  }
+  if (typeSelect) {
     typeSelect.addEventListener("change", () => {
       currentPage = 1;
       updateTableAndMath();
     });
-  if (stateSelect)
+  }
+  if (stateSelect) {
     stateSelect.addEventListener("change", () => {
       currentPage = 1;
       updateTableAndMath();
     });
+  }
+  if (batchSelect) {
+    batchSelect.addEventListener("change", () => {
+      currentPage = 1;
+      updateTableAndMath();
+    });
+  }
+  // 🚀 NEW SORT LISTENER
+  if (sortSelect) {
+    sortSelect.addEventListener("change", () => {
+      currentPage = 1;
+      updateTableAndMath();
+    });
+  }
 
-  if (prevBtn)
+  if (prevBtn) {
     prevBtn.addEventListener("click", () => {
       if (currentPage > 1) {
         currentPage--;
         updateTableAndMath();
       }
     });
-  if (nextBtn)
+  }
+  if (nextBtn) {
     nextBtn.addEventListener("click", () => {
       currentPage++;
       updateTableAndMath();
     });
+  }
 
   // 6. Initialize the math & table on first load
   updateTableAndMath();
@@ -2344,12 +2493,28 @@ async function assignLead(leadId) {
 }
 
 async function bulkAssignToSelectedAgent() {
-  const agentName = document.getElementById("bulk-agent-select").value;
-  const qty = parseInt(document.getElementById("bulk-agent-qty").value, 10);
-  const selectedType = document.getElementById("bulk-type-select").value;
-  const selectedState = document.getElementById("bulk-state-select").value;
-  const unworkedElement = document.getElementById("bulk-unworked-check");
-  const requireUnworked = unworkedElement ? unworkedElement.checked : false;
+  // Grab all the dropdown values (including the new Batch and Sort!)
+  const agentSelect = document.getElementById("bulk-agent-select");
+  const agentName = agentSelect ? agentSelect.value : "";
+
+  const qtyInput = document.getElementById("bulk-agent-qty");
+  const qty = qtyInput ? parseInt(qtyInput.value, 10) : 0;
+
+  const typeSelect = document.getElementById("bulk-type-select");
+  const selectedType = typeSelect ? typeSelect.value : "all";
+
+  const stateSelect = document.getElementById("bulk-state-select");
+  const selectedState = stateSelect ? stateSelect.value : "all";
+
+  const batchSelect = document.getElementById("bulk-batch-select");
+  const selectedBatch = batchSelect ? batchSelect.value : "all";
+
+  const sortSelect = document.getElementById("bulk-sort-select");
+  const selectedSort = sortSelect ? sortSelect.value : "newest";
+
+  const unworkedCheck = document.getElementById("bulk-unworked-check");
+  const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
+
   if (!agentName) {
     UI.showToast("Please select an agent first.", "warning");
     return;
@@ -2359,52 +2524,70 @@ async function bulkAssignToSelectedAgent() {
     return;
   }
 
+  // 1. Get the base unassigned pool
   const unassigned = State.leads.filter(function (l) {
-    // THE GHOST RECORD SHIELD
-    const isValidLead = l && l.id && (l.name || l.address);
-
+    const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
     const isAvailable =
       !l.assignedTo && !Config.terminalStatuses.includes(l.status);
+    return isValidLead && isAvailable;
+  });
 
-    const matchesType =
+  // 2. Filter using the EXACT same rules as the table preview
+  const validLeads = unassigned.filter(function (l) {
+    const typeMatch =
       selectedType === "all" ||
       (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
-
-    const matchesState =
+    const stateMatch =
       selectedState === "all" ||
       (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
 
-    // THE FIX: Use the actual Status to determine if it's unworked,
-    // and safely check previousAgents so it doesn't crash on undefined strings!
-    const isFresh =
-      l.status === "New" &&
-      (!l.previousAgents || l.previousAgents.trim() === "");
-    const matchesUnworked = !requireUnworked || isFresh;
+    // Check our new dynamic batch tags
+    const batchMatch = selectedBatch === "all" || l._batchId === selectedBatch;
 
-    return (
-      isValidLead &&
-      isAvailable &&
-      matchesType &&
-      matchesState &&
-      matchesUnworked
-    );
-  });
+    // Check if it's completely untouched
+    const unworkedMatch =
+      !requireUnworked || (!l.previousAgents && !l.currentMRC);
 
-  // 2. Filter out leads the agent has previously worked
-  const validLeads = unassigned.filter(function (l) {
+    // 🛑 CRITICAL BOUNCER: Make sure the selected agent hasn't worked this lead before!
     const prevAgents = (l.previousAgents || "").toLowerCase();
-    return !prevAgents.includes(agentName.toLowerCase());
+    const agentMatch = !prevAgents.includes(agentName.toLowerCase());
+
+    return typeMatch && stateMatch && batchMatch && unworkedMatch && agentMatch;
   });
 
-  // Dynamic labels for the Toast notifications
+  // 3. SORT USING THE EXACT SAME RULES AS THE TABLE PREVIEW 🚀
+  validLeads.sort((a, b) => {
+    const countA = a.previousAgents
+      ? a.previousAgents.split(",").filter((x) => x.trim()).length
+      : 0;
+    const countB = b.previousAgents
+      ? b.previousAgents.split(",").filter((x) => x.trim()).length
+      : 0;
+
+    if (selectedSort === "least_worked") {
+      return (
+        countA - countB ||
+        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+      );
+    } else if (selectedSort === "most_worked") {
+      return (
+        countB - countA ||
+        new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+      );
+    } else {
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    }
+  });
+
+  // Dynamic labels for the Toast notification
   const stateLabel = selectedState === "all" ? "" : `${selectedState} `;
-  const typeLabel = selectedType === "all" ? "fresh" : selectedType;
+  const typeLabel = selectedType === "all" ? "leads" : `${selectedType} leads`;
   const combinedLabel = `${stateLabel}${typeLabel}`.trim();
 
-  // 3. Validation Warnings
+  // 4. Validation Checks
   if (validLeads.length === 0) {
     UI.showToast(
-      `${agentName} has no available ${combinedLabel} leads left to work!`,
+      `${agentName} has no available ${combinedLabel} left to work with these filters!`,
       "warning",
     );
     return;
@@ -2412,27 +2595,26 @@ async function bulkAssignToSelectedAgent() {
 
   if (qty > validLeads.length) {
     UI.showToast(
-      `Only ${validLeads.length} ${combinedLabel} leads available for ${agentName}.`,
+      `Only ${validLeads.length} ${combinedLabel} available for ${agentName} (already worked the rest).`,
       "warning",
     );
     return;
   }
 
+  // 5. Slice from the newly sorted top!
   const leadsToAssign = validLeads.slice(0, qty);
 
   setLoading(true);
   try {
     await Promise.all(
       leadsToAssign.map(async (lead) => {
-        await Graph.updateLead(lead.id, {
-          Agent_x0020_Assigned: agentName,
-        });
+        await Graph.updateLead(lead.id, { Agent_x0020_Assigned: agentName });
         lead.assignedTo = agentName;
       }),
     );
 
     UI.showToast(
-      `Successfully assigned ${qty} ${combinedLabel} leads to ${agentName}!`,
+      `Successfully assigned ${qty} ${combinedLabel} to ${agentName}!`,
       "success",
     );
     renderAssignLeads();
@@ -2760,6 +2942,53 @@ function renderLeads() {
   State.selectedLeads.clear();
   const contractors = State.contractors.map((c) => c.name);
 
+  // ==========================================
+  // 🧠 THE BATCH CLUSTERER
+  // ==========================================
+  const batches = [];
+  let currentBatch = null;
+  let legacyCount = 0;
+
+  // Sort master leads by creation date to find natural groupings
+  const sortedForBatches = [...State.leads].sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return timeB - timeA;
+  });
+
+  sortedForBatches.forEach((l) => {
+    if (!l.createdAt) {
+      l._batchId = "legacy";
+      legacyCount++;
+      return;
+    }
+
+    const lTime = new Date(l.createdAt).getTime();
+
+    if (!currentBatch) {
+      currentBatch = { time: lTime, count: 1 };
+      batches.push(currentBatch);
+    } else {
+      const diffMinutes = Math.abs(currentBatch.time - lTime) / 60000;
+      if (diffMinutes <= 30) {
+        currentBatch.count++;
+      } else {
+        currentBatch = { time: lTime, count: 1 };
+        batches.push(currentBatch);
+      }
+    }
+    // Tag the lead in RAM so the filter dropdown can find it instantly
+    l._batchId = currentBatch.time.toString();
+  });
+
+  const uniqueStates = [
+    ...new Set(
+      State.leads
+        .map((l) => (l.state || "").trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ].sort();
+
   // 2. Setup Template
   const mainContent = document.getElementById("main-content");
   mainContent.innerHTML = "";
@@ -2779,13 +3008,11 @@ function renderLeads() {
 
   if (importBtn && fileInput) {
     importBtn.onclick = () => {
-      // 1. Build a temporary overlay and modal
       const overlay = document.createElement("div");
       overlay.style.cssText =
         "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(13, 27, 62, 0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter: blur(3px);";
 
       const modal = document.createElement("div");
-      // Mimicking your clean CRM styling
       modal.style.cssText =
         "background:#fff; padding:24px; border-radius:12px; width:320px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:16px;";
 
@@ -2808,36 +3035,28 @@ function renderLeads() {
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      // 2. Handle Modal Clicks
       document.getElementById("cancelTypeBtn").onclick = () => overlay.remove();
-
       document.getElementById("confirmTypeBtn").onclick = () => {
-        // Grab the choice and securely attach it to the file input's dataset
         const selectedType = document.getElementById("tempLeadType").value;
         fileInput.dataset.leadType = selectedType;
-
-        // Destroy the modal and open the file browser
         overlay.remove();
         fileInput.click();
       };
     };
 
-    // Attach our parser function to the hidden input
     fileInput.addEventListener("change", handleFileSelect, false);
   }
 
-  // 5. Populate Bulk Bar Dropdowns
   // ==========================================
   // 5. Populate Bulk Bar Dropdowns
   // ==========================================
   const bulkAssignSelect = clone.getElementById("bulk-assign-select");
 
-  // 🧹 THE UPGRADE: Inject an explicit Unassigned option first
   const unassignOption = document.createElement("option");
-  unassignOption.value = ""; // Empty string clears the assignment when saved!
+  unassignOption.value = "";
   unassignOption.textContent = "-- Unassign Leads --";
   unassignOption.style.fontStyle = "italic";
-  unassignOption.style.color = "#64748b"; // Gives it a slight greyed-out UI feel
+  unassignOption.style.color = "#64748b";
   bulkAssignSelect.appendChild(unassignOption);
 
   contractors.forEach((c) => {
@@ -2855,7 +3074,9 @@ function renderLeads() {
     bulkTypeSelect.appendChild(option);
   });
 
-  // 6. Populate Filters (and restore any previous search state)
+  // ==========================================
+  // 6. Populate Filters & Dynamic Injection
+  // ==========================================
   const searchInput = clone.getElementById("search-input");
   if (searchInput) searchInput.value = State.filters.search || "";
 
@@ -2864,7 +3085,7 @@ function renderLeads() {
     const option = document.createElement("option");
     option.value = s;
     option.textContent = s;
-    if (State.filters.status === s) option.selected = true; // Restore state
+    if (State.filters.status === s) option.selected = true;
     statusFilter.appendChild(option);
   });
 
@@ -2873,15 +3094,71 @@ function renderLeads() {
     const option = document.createElement("option");
     option.value = c;
     option.textContent = c;
-    if (State.filters.assignedTo === c) option.selected = true; // Restore state
+    if (State.filters.assignedTo === c) option.selected = true;
     agentFilter.appendChild(option);
   });
 
+  // 🚀 THE UI INJECTOR: Auto-creates the new dropdowns right next to the Agent filter
+  if (agentFilter && agentFilter.parentNode) {
+    const batchOptionsHTML = batches
+      .map((b) => {
+        const d = new Date(b.time);
+        const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+        const timeStr = d.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        return `<option value="${b.time}">${dateStr} @ ${timeStr} (${b.count})</option>`;
+      })
+      .join("");
+
+    const legacyHTML =
+      legacyCount > 0
+        ? `<option value="legacy">Legacy (${legacyCount})</option>`
+        : "";
+    const stateOptionsHTML = uniqueStates
+      .map((s) => `<option value="${s}">${s}</option>`)
+      .join("");
+
+    agentFilter.parentNode.insertAdjacentHTML(
+      "beforeend",
+      `
+      <select id="filter-batch" class="filter-select">
+        <option value="all">Any Batch</option>
+        ${batchOptionsHTML}
+        ${legacyHTML}
+      </select>
+      <select id="filter-state" class="filter-select">
+        <option value="all">Any State</option>
+        ${stateOptionsHTML}
+      </select>
+      <select id="filter-sort" class="filter-select">
+        <option value="newest">Sort: Newest First</option>
+        <option value="least_worked">Sort: Least Worked</option>
+        <option value="most_worked">Sort: Most Worked</option>
+      </select>
+    `,
+    );
+  }
+
+  // Grab pointers to the newly injected elements
+  const batchFilter = clone.querySelector("#filter-batch");
+  const stateFilter = clone.querySelector("#filter-state");
+  const sortFilter = clone.querySelector("#filter-sort");
+
+  // Restore State
+  if (batchFilter && State.filters.batch)
+    batchFilter.value = State.filters.batch;
+  if (stateFilter && State.filters.state)
+    stateFilter.value = State.filters.state;
+  if (sortFilter && State.filters.sort) sortFilter.value = State.filters.sort;
+
+  // ==========================================
   // 7. THE SMART PAGINATION RENDERER
+  // ==========================================
   let currentPage = 1;
   const itemsPerPage = 50;
 
-  // Build the pagination controls dynamically
   const paginationWrap = document.createElement("div");
   paginationWrap.style.cssText =
     "display:flex; gap:6px; align-items:center; justify-content:flex-end; padding: 12px 0; margin-top: 8px;";
@@ -2891,7 +3168,6 @@ function renderLeads() {
     <button id="leads-next-page" class="btn-secondary" style="padding: 6px 12px; font-size:13px;">Next &rarr;</button>
   `;
 
-  // Insert the controls right below the table wrapper inside the clone
   const tableWrap = clone.getElementById("leads-table-wrap");
   if (tableWrap) {
     tableWrap.parentNode.insertBefore(paginationWrap, tableWrap.nextSibling);
@@ -2902,17 +3178,56 @@ function renderLeads() {
   const pageIndicator = paginationWrap.querySelector("#leads-page-indicator");
 
   function updateTable() {
-    // A. Grab the master list using your existing logic
-    const filtered = getFilteredLeads();
+    // A. Grab the base filtered list
+    let filtered =
+      typeof getFilteredLeads === "function" ? getFilteredLeads() : State.leads;
 
-    // B. Run Pagination Math
+    // B. Apply Advanced Filters (State & Batch)
+    const selectedBatch = batchFilter ? batchFilter.value : "all";
+    const selectedState = stateFilter ? stateFilter.value : "all";
+    const selectedSort = sortFilter ? sortFilter.value : "newest";
+
+    filtered = filtered.filter((l) => {
+      const batchMatch =
+        selectedBatch === "all" || l._batchId === selectedBatch;
+      const stateMatch =
+        selectedState === "all" ||
+        (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
+      return batchMatch && stateMatch;
+    });
+
+    // C. Apply Advanced Sorting
+    filtered.sort((a, b) => {
+      const countA = a.previousAgents
+        ? a.previousAgents.split(",").filter((x) => x.trim()).length
+        : 0;
+      const countB = b.previousAgents
+        ? b.previousAgents.split(",").filter((x) => x.trim()).length
+        : 0;
+
+      if (selectedSort === "least_worked") {
+        return (
+          countA - countB ||
+          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        );
+      } else if (selectedSort === "most_worked") {
+        return (
+          countB - countA ||
+          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        );
+      } else {
+        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+      }
+    });
+
+    // D. Run Pagination Math
     const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
 
     if (currentPage > totalPages) currentPage = totalPages;
     if (currentPage < 1) currentPage = 1;
 
-    // C. Update UI Text & Buttons
+    // E. Update UI Text & Buttons
     if (pageIndicator)
       pageIndicator.textContent = `Pg ${currentPage} / ${totalPages}`;
 
@@ -2925,12 +3240,10 @@ function renderLeads() {
       nextBtn.style.opacity = currentPage === totalPages ? "0.4" : "1";
     }
 
-    // D. Slice down to 50 items and draw
+    // F. Slice down to 50 items and draw
     const startIndex = (currentPage - 1) * itemsPerPage;
     const displayLeads = filtered.slice(startIndex, startIndex + itemsPerPage);
 
-    // This updates the live DOM perfectly because \`tableWrap\` maintains its
-    // pointer to the element even after the clone is mounted to the screen.
     if (tableWrap) {
       tableWrap.replaceChildren(renderLeadsTable(displayLeads));
     }
@@ -2955,20 +3268,22 @@ function renderLeads() {
     State.filters.search = searchInput ? searchInput.value : "";
     State.filters.status = statusFilter ? statusFilter.value : "all";
     State.filters.assignedTo = agentFilter ? agentFilter.value : "all";
+    State.filters.batch = batchFilter ? batchFilter.value : "all";
+    State.filters.state = stateFilter ? stateFilter.value : "all";
+    State.filters.sort = sortFilter ? sortFilter.value : "newest";
 
-    // 2. Reset to page 1 (Crucial! If they are on page 5 and filter down to 10 total leads, it breaks without this)
     currentPage = 1;
-
-    // 3. Force the UI to draw using the 50-item limit
     updateTable();
   };
 
   // Wire up the inputs to the interceptor
-  // Using 'input' for search means it filters live on every keystroke!
   if (searchInput) searchInput.addEventListener("input", handleFilterChange);
   if (statusFilter) statusFilter.addEventListener("change", handleFilterChange);
   if (agentFilter) agentFilter.addEventListener("change", handleFilterChange);
-  // Initial draw before mounting
+  if (batchFilter) batchFilter.addEventListener("change", handleFilterChange);
+  if (stateFilter) stateFilter.addEventListener("change", handleFilterChange);
+  if (sortFilter) sortFilter.addEventListener("change", handleFilterChange);
+
   updateTable();
 
   // 8. Mount!
@@ -3324,6 +3639,16 @@ function buildLeadRowHtml(lead, compact, agentView, admin) {
     lead.flags && lead.flags.includes("needs_recycle") ? "row-warn" : "";
   const selCls = isChecked ? "row-selected" : "";
 
+  // 🚀 THE BADGE CALCULATOR
+  const prevArray = lead.previousAgents
+    ? lead.previousAgents.split(",").filter((a) => a.trim() !== "")
+    : [];
+  const prevCount = prevArray.length;
+  const prevBadge =
+    prevCount > 0
+      ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; white-space:nowrap; cursor:help;">↺ ${prevCount} prev agent${prevCount > 1 ? "s" : ""}</span>`
+      : "";
+
   let html = `<tr class="lead-row ${warnCls} ${selCls}" onclick="${rowClick}" style="${rowStyle}">`;
 
   if (!compact) {
@@ -3332,7 +3657,14 @@ function buildLeadRowHtml(lead, compact, agentView, admin) {
              </td>`;
   }
 
-  html += `<td><span class="lead-name">${escHtml(lead.name)}</span></td>`;
+  // 🚀 THE UPGRADED NAME COLUMN
+  html += `<td>
+            <div style="display:flex; align-items:center;">
+              <span class="lead-name" style="font-weight: 600; color: #0D1B3E;">${escHtml(lead.name)}</span>
+              ${prevBadge}
+            </div>
+           </td>`;
+
   html += `<td>${lead.leadType ? `<span class="lead-type-badge ${typeCls}">${escHtml(lead.leadType)}</span>` : "—"}</td>`;
   html += `<td><span class="status-badge ${statusCls}">${lead.status}</span></td>`;
   html += `<td class="td-mono">${escHtml(lead.phone || "—")}</td>`;
@@ -3769,10 +4101,12 @@ async function exportDateRangeCSV() {
   if (!startVal || !endVal)
     return UI.showToast("Select a date range.", "warning");
 
-  const startObj = new Date(startVal);
-  startObj.setHours(0, 0, 0, 0);
-  const endObj = new Date(endVal);
-  endObj.setHours(23, 59, 59, 999);
+  // 🛑 THE FIX: Force Local Time by splitting the YYYY-MM-DD string
+  const [sYear, sMonth, sDay] = startVal.split("-");
+  const startObj = new Date(sYear, sMonth - 1, sDay, 0, 0, 0, 0);
+
+  const [eYear, eMonth, eDay] = endVal.split("-");
+  const endObj = new Date(eYear, eMonth - 1, eDay, 23, 59, 59, 999);
 
   if (startObj > endObj) return UI.showToast("Invalid date range.", "warning");
 
@@ -3909,7 +4243,7 @@ async function exportDateRangeCSV() {
       );
 
       if (activeDatesOnly.length > 0) {
-        // 🚀 THE NEW SINGLE BLANK ROW: Separates Base Stats from Date Headers
+        // Separates Base Stats from Date Headers
         csvRows.push("");
 
         // ROW 2: Date Headers
@@ -3945,7 +4279,7 @@ async function exportDateRangeCSV() {
         );
       }
 
-      // 🚀 THE TWO BLANK ROWS: Pushing two empty strings creates a double line break between agents
+      // Pushing two empty strings creates a double line break between agents
       csvRows.push("", "");
     });
 
@@ -3981,24 +4315,136 @@ async function exportDateRangeCSV() {
 }
 
 function exportReportCSV() {
-  const stats = window._reportStats || [];
-  const today = new Date().toISOString().split("T")[0];
-  const csv = ["Agent,Contacts Today,Sales Today,Date"]
-    .concat(
-      stats.map(function (a) {
-        return [a.agent, a.contacts, a.sold, today]
-          .map(function (v) {
-            return '"' + String(v || "").replace(/"/g, '""') + '"';
-          })
-          .join(",");
-      }),
-    )
-    .join("\n");
+  const now = new Date();
+
+  // Force local time boundaries for exactly TODAY
+  const startObj = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+  const endObj = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    23,
+    59,
+    59,
+    999,
+  );
+  const todayStr = now.toLocaleDateString();
+
+  // 1. Filter logs for TODAY only
+  let todayLogs = (State.activityLog || []).filter((log) => {
+    if (!log.timestamp) return false;
+    const logDate = new Date(log.timestamp);
+    return logDate >= startObj && logDate <= endObj;
+  });
+
+  const agentData = {};
+
+  // 2. Tally Data (Using the same advanced math as the Date Range tool)
+  todayLogs.forEach((log) => {
+    const email = log.agentEmail || log.agent || "Unknown";
+
+    if (!agentData[email]) {
+      agentData[email] = {
+        agent: email,
+        totalContacts: 0,
+        totalSales: 0,
+        timestamps: [],
+      };
+    }
+
+    agentData[email].totalContacts++;
+
+    if (
+      log.action &&
+      (log.action.includes("Sold") || log.action.includes("Sale"))
+    ) {
+      agentData[email].totalSales++;
+    }
+
+    agentData[email].timestamps.push(new Date(log.timestamp).getTime());
+  });
+
+  // 3. Build CSV Rows
+  const csvRows = [];
+
+  // Global Header
+  csvRows.push(
+    [
+      "Agent",
+      "Contacts Today",
+      "Sales Today",
+      "Close Rate",
+      "Avg Time Between Contacts",
+      "Date",
+    ].join(","),
+  );
+
+  // 4. Calculate Advanced Metrics per Agent
+  Object.values(agentData).forEach((data) => {
+    // Calculate Time Gaps (Ignoring lunch/breaks over 2hrs)
+    let totalDiffMs = 0,
+      diffCount = 0;
+    if (data.timestamps.length > 1) {
+      data.timestamps.sort((a, b) => a - b);
+      for (let i = 1; i < data.timestamps.length; i++) {
+        const diff = data.timestamps[i] - data.timestamps[i - 1];
+        if (diff < 7200000) {
+          totalDiffMs += diff;
+          diffCount++;
+        }
+      }
+    }
+
+    let avgTimeStr = "—";
+    if (diffCount > 0) {
+      const avgMs = totalDiffMs / diffCount;
+      avgTimeStr = `${Math.floor(avgMs / 60000)}m ${Math.floor((avgMs % 60000) / 1000)}s`;
+    }
+
+    const closeRate =
+      data.totalContacts > 0
+        ? Math.round((data.totalSales / data.totalContacts) * 100) + "%"
+        : "0%";
+
+    csvRows.push(
+      [
+        `"${data.agent}"`,
+        data.totalContacts,
+        data.totalSales,
+        `"${closeRate}"`,
+        `"${avgTimeStr}"`,
+        `"${todayStr}"`,
+      ].join(","),
+    );
+  });
+
+  if (csvRows.length === 1) {
+    return UI.showToast("No activity found for today.", "warning");
+  }
+
+  // 5. Download Trigger
+  const csvContent = csvRows.join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = "raimak-report-" + today + ".csv";
+  a.href = url;
+
+  // Format the filename safely (e.g. 5-29-2026)
+  const safeDate = todayStr.replace(/\//g, "-");
+  a.download = `raimak-daily-report-${safeDate}.csv`;
+
   a.click();
-  UI.showToast("Report exported!", "success");
+  URL.revokeObjectURL(url);
+
+  UI.showToast("Daily report exported!", "success");
 }
 
 // ============================================================
@@ -5069,7 +5515,7 @@ function renderLeadModal(lead) {
   const isEdit = !!lead;
   const contractors = State.contractors.map((c) => c.name);
   const modalContainer = document.getElementById("modal");
-  modalContainer.innerHTML = ""; // Clear existing
+  modalContainer.innerHTML = "";
   const template = document.getElementById("tmpl-lead-modal");
   const clone = template.content.cloneNode(true);
 
@@ -5081,13 +5527,18 @@ function renderLeadModal(lead) {
   submitBtn.textContent = isEdit ? "Save Changes" : "Add Lead";
   submitBtn.onclick = () => (isEdit ? submitEditLead() : submitAddLead());
 
-  // 3. Populate Standard Text Inputs (Safely falls back to empty string if creating new lead)
+  // 3. Populate Standard Text Inputs
   const safeVal = (val) => val || "";
 
   clone.getElementById("f-firstname").value = safeVal(lead?.firstName);
   clone.getElementById("f-lastname").value = safeVal(lead?.lastName);
-  clone.getElementById("f-email").value = safeVal(lead?.email);
-  clone.getElementById("f-phone").value = safeVal(lead?.cbr);
+
+  // Maps BTN securely, falling back to legacy phone data if needed
+  clone.getElementById("f-btn").value = safeVal(
+    lead?.BTN || lead?.btn || lead?.phone,
+  );
+  clone.getElementById("f-cbr").value = safeVal(lead?.cbr);
+
   clone.getElementById("f-address").value = safeVal(lead?.address);
   clone.getElementById("f-city").value = safeVal(lead?.city);
   clone.getElementById("f-state").value = safeVal(lead?.state);
@@ -5137,16 +5588,19 @@ function renderLeadModal(lead) {
   });
 
   // 5. Build AutoPay Radios
+  // 🛡️ THE FIX: Set text color to #cbd5e1 (slate-300) so it's readable on dark
   const autopayContainer = clone.getElementById("f-autopay-container");
   ["ACH - Debit Card", "ACH - Credit Card", "No Auto Pay"].forEach((opt) => {
     const isChecked = lead && lead.autoPay === opt ? "checked" : "";
     autopayContainer.innerHTML += `
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-        <input type="radio" name="f-autopay" value="${opt}" ${isChecked} style="accent-color:#2563B0;width:14px;height:14px"> ${opt}
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:#cbd5e1;">
+        <input type="radio" name="f-autopay" value="${opt}" ${isChecked} style="accent-color:#0ea5e9;width:13px;height:13px">
+        ${opt}
       </label>`;
   });
 
   // 6. Notes History Parser
+  // 🛡️ THE FIX: Replaced light mode backgrounds with translucent dark slate
   const notesHistory = clone.getElementById("modal-notes-history");
   if (lead && lead.notes && lead.notes.trim()) {
     const notesHtml = lead.notes
@@ -5159,21 +5613,27 @@ function renderLeadModal(lead) {
           const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
           const text = match[3];
           return `
-            <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
-              <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
-                <span style="font-family:var(--font-mono);font-size:10px;color:#2563B0;font-weight:700;background:#E8F0FF;padding:1px 6px;border-radius:3px">${date}</span>
-                ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#6B85B0">${escHtml(agent)}</span>` : ""}
+            <div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.05)">
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+                <span style="font-family:var(--font-mono);font-size:10px;color:#38bdf8;font-weight:700;background:rgba(56, 189, 248, 0.1);padding:2px 4px;border-radius:4px">${date}</span>
+                ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#94a3b8;font-weight:600;">${escHtml(agent)}</span>` : ""}
               </div>
-              <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
+              <span style="font-size:12px;color:#e2e8f0;line-height:1.3;">${escHtml(text)}</span>
             </div>`;
         }
-        return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8"><div style="margin-bottom:3px"><span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:#F4F7FD;padding:1px 6px;border-radius:3px">Legacy note — author unknown</span></div><span style="font-size:13px;color:#4A6080">${escHtml(line)}</span></div>`;
+        return `
+          <div style="margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.05)">
+            <div style="margin-bottom:2px">
+              <span style="font-family:var(--font-mono);font-size:10px;color:#94a3b8;background:rgba(255,255,255,0.05);padding:2px 4px;border-radius:4px">Legacy note</span>
+            </div>
+            <span style="font-size:12px;color:#cbd5e1;line-height:1.3;">${escHtml(line)}</span>
+          </div>`;
       })
       .join("");
 
-    notesHistory.innerHTML = `<div style="background:#F4F7FD;border:1px solid #D0DCF0;border-radius:6px;padding:12px 14px;margin-bottom:10px;max-height:180px;overflow-y:auto">${notesHtml}</div>`;
+    notesHistory.innerHTML = `<div style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 10px;margin-bottom:8px;max-height:140px;overflow-y:auto">${notesHtml}</div>`;
   } else {
-    notesHistory.innerHTML = `<div style="font-size:12px;color:#8EA5C8;margin-bottom:10px;font-family:var(--font-mono)">No notes yet.</div>`;
+    notesHistory.innerHTML = `<div style="font-size:12px;color:#64748b;margin-bottom:8px;font-style:italic;">No notes yet.</div>`;
   }
 
   // 7. Mount & Display
