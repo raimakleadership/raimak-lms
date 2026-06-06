@@ -299,37 +299,66 @@ const Graph = (() => {
 
       // 👻 THE GHOST LEAD INTERCEPTOR
       if (errMsg.includes("404") || errMsg.includes("not found")) {
-        console.warn(`Lead ${itemId} missing from server! Resurrecting...`);
+        console.warn(
+          `Lead ${itemId} missing from server! Checking local memory...`,
+        );
 
-        // 1. Find the ghost in the global UI state
-        const deadLead =
+        // 1. Find the INDEX of the ghost using type-safe String coercion
+        const deadLeadIndex =
           window.State && window.State.leads
-            ? window.State.leads.find((l) => l.id === itemId)
-            : null;
+            ? window.State.leads.findIndex(
+                (l) => String(l.id) === String(itemId),
+              )
+            : -1;
 
-        if (!deadLead) {
+        if (deadLeadIndex === -1) {
           throw new Error(
             "Lead missing from server and no local memory found to rebuild it.",
           );
         }
 
-        // 2. Rebuild the core fields
-        // ⚠️ EDIT THESE to match your exact SharePoint column internal names
-        const rebuiltPayload = {
-          Title: deadLead.name || "Unknown",
-          PhoneNumber: deadLead.phone || "",
-          Address: deadLead.address || "",
-          // CBR: deadLead.cbr || "",
-          // BTN: deadLead.btn || "",
+        const deadLead = window.State.leads[deadLeadIndex];
 
-          // 3. Drop the new edits right on top of the old data
+        // 🚀 THE PURGE MECHANIC: Strictly enforces Name & Address
+        if (!deadLead.name || !deadLead.address) {
+          console.warn(
+            `Lead ${itemId} lacks mandatory Name/Address. Purging from local cache.`,
+          );
+          window.State.leads.splice(deadLeadIndex, 1);
+          throw new Error(
+            "Lead missing from server and lacked minimum data to resurrect. It has been deleted locally.",
+          );
+        }
+
+        console.warn(`Resurrecting Lead ${itemId}...`);
+
+        // 2. REVERSE MAP: Building the payload using your normalizeLeadItem schema
+        const rebuiltPayload = {
+          // THE MANDATORIES
+          Title: deadLead.name,
+          Address: deadLead.address,
+
+          // THE NICE-TO-HAVES (Pulled from local cache, ignoring Phone/CBR/BTN)
+          FirstName: deadLead.firstName || "",
+          LastName: deadLead.lastName || "",
+          Email: deadLead.email || "",
+          Status: deadLead.status || "New",
+          AssignedTo: deadLead.assignedTo || "",
+          City: deadLead.city || "",
+          State: deadLead.state || "",
+          Zip: deadLead.zip || "",
+          Notes: deadLead.notes || "",
+          LeadType: deadLead.leadType || "",
+          PreviousAgents: deadLead.previousAgents || "",
+
+          // 3. Drop the brand new edits right on top of the resurrected data
           ...fields,
         };
 
-        // 4. Fire your existing addLead function to create the new row
+        // 4. Fire your existing addLead function to create the new row in SharePoint
         const resurrectedLead = await addLead(rebuiltPayload);
 
-        // 5. Swap the ID in local RAM so the UI knows about the new row
+        // 5. Swap the ID in local RAM so the UI knows about the newly generated SharePoint ID
         deadLead.id = resurrectedLead.id;
 
         // Pretend everything went perfectly
@@ -341,7 +370,7 @@ const Graph = (() => {
     }
   }
 
-  async function deleteLead(itemId) {
+  /*  async function deleteLead(itemId) {
     await resolveSiteIds();
     const url =
       base +
@@ -359,7 +388,7 @@ const Graph = (() => {
         "If-Match": "*",
       },
     });
-  }
+ } */
 
   function normalizeLeadItem(item) {
     const f = item.fields || {};
@@ -1036,7 +1065,6 @@ const Graph = (() => {
     getLeads,
     addLead,
     updateLead,
-    deleteLead,
     assignAgent,
     recycleLead,
     getNextLeadForAgent,

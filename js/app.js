@@ -79,6 +79,237 @@ const stateTimezones = {
   WY: "America/Denver",
 };
 
+// ==========================================
+// 📊 PIPELINE INSIGHTS MODULE
+// ==========================================
+window._activeInsightChart = null;
+
+const PipelineInsights = {
+  currentLeads: [],
+  currentDataArr: [],
+  currentMode: "",
+  colorMap: {},
+  currentTotal: 0,
+
+  getColorForLabel: function (label) {
+    const colors = [
+      "#0ea5e9",
+      "#10b981",
+      "#8b5cf6",
+      "#f59e0b",
+      "#f43f5e",
+      "#14b8a6",
+      "#64748b",
+      "#f97316",
+      "#3b82f6",
+      "#84cc16",
+      "#d946ef",
+      "#06b6d4",
+    ];
+    if (!this.colorMap[label]) {
+      const assignedCount = Object.keys(this.colorMap).length;
+      this.colorMap[label] = colors[assignedCount % colors.length];
+    }
+    return this.colorMap[label];
+  },
+
+  aggregate: function (leads, mode) {
+    const counts = {};
+    if (mode === "assigned") {
+      let assigned = 0,
+        unassigned = 0;
+      leads.forEach((l) => (l.assignedTo ? assigned++ : unassigned++));
+      return [
+        ["Assigned", assigned],
+        ["Unassigned", unassigned],
+      ].filter((x) => x[1] > 0);
+    }
+    leads.forEach((lead) => {
+      let key = "Unknown";
+      if (mode === "status") key = lead.status || "New";
+      if (mode === "state") key = (lead.state || "Unknown").toUpperCase();
+      if (mode === "type") key = lead.leadType || "None";
+      if (key.trim() !== "") counts[key] = (counts[key] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  },
+
+  render: function (canvasId, leads, mode) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    if (this.currentMode !== mode) {
+      this.currentMode = mode;
+      this.colorMap = {};
+    }
+
+    this.currentDataArr = this.aggregate(leads, mode);
+    const labels = this.currentDataArr.map((item) => item[0]);
+    const data = this.currentDataArr.map((item) => item[1]);
+    const backgroundColors = labels.map((label) =>
+      this.getColorForLabel(label),
+    );
+
+    const newTotal = data.reduce((a, b) => a + b, 0);
+
+    if (
+      window._activeInsightChart &&
+      document.body.contains(window._activeInsightChart.canvas)
+    ) {
+      window._activeInsightChart.data.labels = labels;
+      window._activeInsightChart.data.datasets[0].data = data;
+      window._activeInsightChart.data.datasets[0].backgroundColor =
+        backgroundColors;
+      this.currentTotal = newTotal;
+      window._activeInsightChart.update();
+      return;
+    }
+
+    if (window._activeInsightChart) {
+      window._activeInsightChart.destroy();
+      window._activeInsightChart = null;
+    }
+
+    this.currentTotal = newTotal;
+
+    window._activeInsightChart = new Chart(canvas, {
+      type: "doughnut",
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            data: data,
+            backgroundColor: backgroundColors,
+            borderWidth: 2,
+            borderColor: "#ffffff",
+            hoverOffset: 6,
+          },
+        ],
+      },
+      plugins: [
+        {
+          id: "centerTotalText",
+          beforeDraw: (chart) => {
+            const { ctx, chartArea } = chart;
+            const meta = chart.getDatasetMeta(0);
+            if (!chartArea || !meta) return;
+
+            ctx.restore();
+
+            let centerX, centerY;
+            if (meta.data && meta.data.length > 0) {
+              centerX = meta.data[0].x;
+              centerY = meta.data[0].y;
+            } else {
+              centerX = (chartArea.left + chartArea.right) / 2;
+              centerY = (chartArea.top + chartArea.bottom) / 2;
+            }
+
+            ctx.font = "bold 28px var(--font-mono, sans-serif)";
+            ctx.textBaseline = "middle";
+            ctx.fillStyle = "#0D1B3E";
+
+            const text = PipelineInsights.currentTotal.toLocaleString();
+            const textX = Math.round(centerX - ctx.measureText(text).width / 2);
+            const textY = centerY - 6;
+            ctx.fillText(text, textX, textY);
+
+            ctx.font = "600 11px sans-serif";
+            ctx.fillStyle = "#64748B";
+            const label = "TOTAL";
+            const labelX = Math.round(
+              centerX - ctx.measureText(label).width / 2,
+            );
+            ctx.fillText(label, labelX, centerY + 18);
+            ctx.save();
+          },
+        },
+      ],
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: "65%",
+        animation: {
+          onProgress: () => {
+            if (window._activeInsightChart) window._activeInsightChart.draw();
+          },
+        },
+        onClick: (event, elements) => {
+          if (!elements.length) return;
+          const clickedLabel =
+            PipelineInsights.currentDataArr[elements[0].index][0];
+
+          // 🚀 THE FIX: We now tell the chart to look for BOTH the standard IDs and the "opt-" quarantined IDs!
+          let targetIds = [];
+          if (PipelineInsights.currentMode === "state")
+            targetIds = [
+              "filter-state",
+              "opt-filter-state",
+              "bulk-state-select",
+            ];
+          if (PipelineInsights.currentMode === "type")
+            targetIds = ["filter-type", "opt-filter-type", "bulk-type-select"];
+          if (PipelineInsights.currentMode === "status")
+            targetIds = ["filter-status", "opt-filter-status"];
+
+          for (let id of targetIds) {
+            const selectEl = document.getElementById(id);
+            if (selectEl) {
+              for (let i = 0; i < selectEl.options.length; i++) {
+                const opt = selectEl.options[i];
+                if (
+                  opt.value.toUpperCase() === clickedLabel.toUpperCase() ||
+                  opt.text.toUpperCase() === clickedLabel.toUpperCase()
+                ) {
+                  selectEl.value = opt.value;
+                  selectEl.dispatchEvent(
+                    new Event("change", { bubbles: true }),
+                  );
+                  return;
+                }
+              }
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            position: "right",
+            labels: {
+              color: "#475569",
+              font: { size: 12, family: "var(--font-mono)" },
+              padding: 16,
+            },
+            onClick: null,
+          },
+        },
+      },
+    });
+  },
+
+  init: function (selectId, canvasId, leads, isMainPage) {
+    const selector = document.getElementById(selectId);
+    if (!selector) return;
+    this.currentLeads = leads;
+    let options = `<option value="type">Lead Type Distribution</option><option value="state">Geographic (State)</option>`;
+    if (isMainPage)
+      options =
+        `<option value="status">Pipeline Status</option><option value="assigned">Assigned vs Unassigned</option>` +
+        options;
+    if (!selector.innerHTML.trim()) selector.innerHTML = options;
+    this.render(canvasId, this.currentLeads, selector.value);
+    selector.addEventListener("change", (e) =>
+      this.render(canvasId, this.currentLeads, e.target.value),
+    );
+  },
+
+  updateLive: function (selectId, canvasId, leads) {
+    const selector = document.getElementById(selectId);
+    this.currentLeads = leads;
+    if (selector && window._activeInsightChart)
+      this.render(canvasId, this.currentLeads, selector.value);
+  },
+};
+
 function isAdmin() {
   return State.role === "admin";
 }
@@ -983,6 +1214,9 @@ function renderMyLeads() {
 
       // 2. Terminal Status
       if (Config.terminalStatuses.includes(l.status)) return false;
+
+      // 2.5 🛑 3rd Contact Eviction
+      if (l.status === "3rd Contact") return false;
 
       // 3. Dismissed Leads
       if (
@@ -2097,27 +2331,19 @@ function renderAssignLeads() {
     }
   });
 
-  const uniqueStates = [
-    ...new Set(
-      unassigned
-        .map((l) => (l.state || "").trim().toUpperCase())
-        .filter(Boolean),
-    ),
-  ].sort();
-
   // ==========================================
-  // 🧠 THE BATCH CLUSTERER
+  // 🧠 BATCH CLUSTERER
   // ==========================================
   const batches = [];
   let currentBatch = null;
+  let legacyCount = 0;
 
   const sortedForBatches = [...unassigned].sort((a, b) => {
-    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return timeB - timeA;
+    return (
+      (b.createdAt ? new Date(b.createdAt).getTime() : 0) -
+      (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+    );
   });
-
-  let legacyCount = 0;
 
   sortedForBatches.forEach((l) => {
     if (!l.createdAt) {
@@ -2125,9 +2351,7 @@ function renderAssignLeads() {
       legacyCount++;
       return;
     }
-
     const lTime = new Date(l.createdAt).getTime();
-
     if (!currentBatch) {
       currentBatch = { time: lTime, count: 1 };
       batches.push(currentBatch);
@@ -2146,13 +2370,7 @@ function renderAssignLeads() {
   const batchOptionsHTML = batches
     .map((b) => {
       const d = new Date(b.time);
-      const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
-      const timeStr = d.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const label = `${dateStr} @ ${timeStr} (${b.count} leads)`;
-      return `<option value="${b.time}">${escHtml(label)}</option>`;
+      return `<option value="${b.time}">${d.getMonth() + 1}/${d.getDate()} @ ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (${b.count} leads)</option>`;
     })
     .join("");
 
@@ -2161,71 +2379,74 @@ function renderAssignLeads() {
       ? `<option value="legacy">Legacy / Unknown Date (${legacyCount} leads)</option>`
       : "";
 
+  // ==========================================
+  // 🎨 THE NEW LAYOUT RESTRUCTURE
+  // ==========================================
   document.getElementById("main-content").innerHTML = `
-    <div class="view-header">
+    <div class="view-header" style="margin-bottom: 16px;">
       <div>
         <h1 class="view-title">Assign Leads</h1>
         <span class="view-subtitle">// ${unassigned.length} total unassigned</span>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn-cyan" onclick="navigate('drip')">
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><polyline points="12,8 12,12 14,14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          Drip Feed Mode
-        </button>
+        <button class="btn-cyan" onclick="navigate('drip')">Drip Feed Mode</button>
         <button class="btn-primary" onclick="autoAssignLeads()">Auto-Assign Evenly</button>
       </div>
     </div>
 
-    <div class="card" style="margin-bottom:20px;border-color:#2563B0">
-      <div class="card-header" style="background:#EEF4FB">
-        <h2 class="card-title" style="color:#0D1B3E">Bulk Assign to Agent</h2>
-        <span class="card-meta">Select an agent, lead type, state, and quantity</span>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom: 24px;">
+      <select id="bulk-batch-select" class="form-input" style="width: 160px;">
+        <option value="all">Any Batch</option>
+        ${batchOptionsHTML}
+        ${legacyHTML}
+      </select>
+
+      <select id="bulk-type-select" class="form-input" style="width: 120px;"><option value="all">Any Type</option></select>
+      <select id="bulk-state-select" class="form-input" style="width: 120px;"><option value="all">Any State</option></select>
+      
+      <select id="bulk-sort-select" class="form-input" style="width: 150px;">
+        <option value="newest">Sort: Newest First</option>
+        <option value="least_worked">Sort: Least Worked</option>
+        <option value="most_worked">Sort: Most Worked</option>
+      </select>
+
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#0D1B3E; cursor:pointer; margin-left:8px;">
+        <input type="checkbox" id="bulk-unworked-check" style="cursor:pointer; width:15px; height:15px;"> Unworked Only
+      </label>
+
+      <button id="assign-reset-filters" class="btn-ghost" style="padding: 6px; margin-left: auto;" title="Reset Filters">
+        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#64748B" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+      </button>
+    </div>
+
+    <div style="margin-bottom: 28px; padding: 0 4px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h2 style="font-size: 13px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px; margin: 0;">Pipeline Insights</h2>
+        <select id="insights-selector" class="form-input" style="width: 220px; padding: 6px 12px; height: auto; font-size: 13px;"></select>
       </div>
-      <div style="padding:16px 20px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <div style="height: 220px; width: 100%;">
+        <canvas id="insights-canvas"></canvas>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:24px;border-color:#2563B0">
+      <div class="card-header" style="background:#EEF4FB; padding: 12px 20px;">
+        <h2 class="card-title" style="color:#0D1B3E; font-size: 14px;">Bulk Assign Filtered Leads</h2>
+      </div>
+      <div style="padding:16px 20px; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
         
-        <select id="bulk-agent-select" class="form-input" style="min-width: 180px; flex: 1;">
+        <select id="bulk-agent-select" class="form-input" style="min-width: 220px;">
           <option value="">Select Agent...</option>
           ${contractors.map((c) => `<option value="${escHtml(c.name)}">${escHtml(c.name)} (${agentCounts[c.name]} assigned)</option>`).join("")}
         </select>
 
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          
-          <select id="bulk-batch-select" class="form-input" style="width: 160px; padding-right: 24px;">
-            <option value="all">Any Batch</option>
-            ${batchOptionsHTML}
-            ${legacyHTML}
-          </select>
+        <span id="agent-readiness-badge" style="display:none; align-items:center; padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: 700; transition: all 0.2s ease; white-space: nowrap;"></span>
 
-          <select id="bulk-sort-select" class="form-input" style="width: 150px; padding-right: 24px;">
-            <option value="newest">Sort: Newest First</option>
-            <option value="least_worked">Sort: Least Worked</option>
-            <option value="most_worked">Sort: Most Worked</option>
-          </select>
-
-          <select id="bulk-type-select" class="form-input" style="width: 120px; padding-right: 24px;">
-            <option value="all">Any Type</option>
-            ${(Config.leadTypes || []).map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join("")}
-          </select>
-
-          <select id="bulk-state-select" class="form-input" style="width: 120px; padding-right: 24px;">
-            <option value="all">Any State</option>
-            ${uniqueStates.map((s) => `<option value="${escHtml(s)}">${escHtml(s)}</option>`).join("")}
-          </select>
-
-          <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#0D1B3E; cursor:pointer; margin-left:4px; white-space:nowrap;">
-            <input type="checkbox" id="bulk-unworked-check" style="cursor:pointer; width:15px; height:15px;">
-            Unworked Only
-          </label>
-        </div>
-
-        <div style="display:flex; align-items:center; gap:8px;">
-          <input type="number" id="bulk-agent-qty" class="form-input" min="1" max="${unassigned.length}" placeholder="Qty" style="width: 75px;">
+        <div style="display:flex; align-items:center; gap:12px; margin-left: auto;">
+          <input type="number" id="bulk-agent-qty" class="form-input" min="1" max="${unassigned.length}" placeholder="Qty" style="width: 90px;">
           <span id="bulk-type-count" style="font-size: 13px; color: #6B85B0; white-space: nowrap;">of ${unassigned.length} available</span>
+          <button class="btn-primary" onclick="bulkAssignToSelectedAgent()">Assign Leads</button>
         </div>
-
-        <button class="btn-primary" onclick="bulkAssignToSelectedAgent()" style="white-space: nowrap;">
-          Assign
-        </button>
       </div>
     </div>
 
@@ -2235,7 +2456,6 @@ function renderAssignLeads() {
           <h2 class="card-title">Unassigned Leads Preview</h2>
           <span class="card-meta" id="table-meta-count">Loading...</span>
         </div>
-        
         <div style="display:flex; gap:8px; align-items:center;">
           <button id="btn-prev-page" class="btn-secondary" style="padding: 4px 10px;">&larr; Prev</button>
           <span id="page-indicator" style="font-family:var(--font-mono); font-size: 13px; font-weight: 600; color: #0D1B3E;">Page 1</span>
@@ -2246,60 +2466,95 @@ function renderAssignLeads() {
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>Name</th><th>Type</th><th>BTN</th><th>Status</th><th style="text-align: right;">Assign To</th></tr></thead>
-          <tbody id="assign-tbody">
-            </tbody>
+          <tbody id="assign-tbody"></tbody>
         </table>
       </div>
     </div>
   `;
 
-  // 3. Internal State & DOM Pointers
+  // 3. Internal Pointers
   let currentPage = 1;
   const itemsPerPage = 25;
   const unworkedCheck = document.getElementById("bulk-unworked-check");
   const typeSelect = document.getElementById("bulk-type-select");
   const stateSelect = document.getElementById("bulk-state-select");
   const batchSelect = document.getElementById("bulk-batch-select");
-  const sortSelect = document.getElementById("bulk-sort-select"); // 🚀 NEW POINTER
+  const sortSelect = document.getElementById("bulk-sort-select");
   const qtyInput = document.getElementById("bulk-agent-qty");
   const countDisplay = document.getElementById("bulk-type-count");
+  const resetFiltersBtn = document.getElementById("assign-reset-filters");
 
-  const tbody = document.getElementById("assign-tbody");
-  const prevBtn = document.getElementById("btn-prev-page");
-  const nextBtn = document.getElementById("btn-next-page");
-  const pageIndicator = document.getElementById("page-indicator");
-  const tableMetaCount = document.getElementById("table-meta-count");
+  // ==========================================
+  // 🧠 CASCADING DROPDOWNS
+  // ==========================================
+  function updateDynamicDropdowns() {
+    const selectedBatch = batchSelect ? batchSelect.value : "all";
+    const currentType = typeSelect ? typeSelect.value : "all";
+    const currentState = stateSelect ? stateSelect.value : "all";
 
-  // 4. The Smart Table Renderer
+    const batchLeads = unassigned.filter(
+      (l) => selectedBatch === "all" || l._batchId === selectedBatch,
+    );
+
+    const availableTypes = [
+      ...new Set(
+        batchLeads.map((l) => (l.leadType || "").trim()).filter(Boolean),
+      ),
+    ].sort();
+    const availableStates = [
+      ...new Set(
+        batchLeads
+          .map((l) => (l.state || "").trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    ].sort();
+
+    if (typeSelect) {
+      typeSelect.innerHTML =
+        `<option value="all">Any Type</option>` +
+        availableTypes
+          .map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`)
+          .join("");
+      typeSelect.value = availableTypes.includes(currentType)
+        ? currentType
+        : "all";
+    }
+
+    if (stateSelect) {
+      stateSelect.innerHTML =
+        `<option value="all">Any State</option>` +
+        availableStates
+          .map((s) => `<option value="${escHtml(s)}">${escHtml(s)}</option>`)
+          .join("");
+      stateSelect.value = availableStates.includes(currentState)
+        ? currentState
+        : "all";
+    }
+  }
+
+  // ==========================================
+  // 🧠 TABLE RENDERING & MATH
+  // ==========================================
   function updateTableAndMath() {
     const selectedType = typeSelect ? typeSelect.value : "all";
     const selectedState = stateSelect ? stateSelect.value : "all";
     const selectedBatch = batchSelect ? batchSelect.value : "all";
-    const selectedSort = sortSelect ? sortSelect.value : "newest"; // 🚀 GET SORT VALUE
+    const selectedSort = sortSelect ? sortSelect.value : "newest";
     const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
 
-    // 4A. FILTER THE LEADS
     const filteredLeads = unassigned.filter(function (l) {
-      const typeMatch =
-        selectedType === "all" ||
-        (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
-
-      const stateMatch =
-        selectedState === "all" ||
-        (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
-
-      const batchMatch =
-        selectedBatch === "all" || l._batchId === selectedBatch;
-
-      const unworkedMatch =
-        !requireUnworked || (!l.previousAgents && !l.currentMRC);
-
-      return typeMatch && stateMatch && batchMatch && unworkedMatch;
+      return (
+        (selectedType === "all" ||
+          (l.leadType &&
+            l.leadType.toLowerCase() === selectedType.toLowerCase())) &&
+        (selectedState === "all" ||
+          (l.state && l.state.toUpperCase() === selectedState.toUpperCase())) &&
+        (selectedBatch === "all" || l._batchId === selectedBatch) &&
+        (!requireUnworked || (!l.previousAgents && !l.currentMRC))
+      );
     });
 
-    // 4B. SORT THE LEADS 🚀
     filteredLeads.sort((a, b) => {
-      // Safely calculate how many agents have touched each lead
       const countA = a.previousAgents
         ? a.previousAgents.split(",").filter((x) => x.trim()).length
         : 0;
@@ -2307,23 +2562,19 @@ function renderAssignLeads() {
         ? b.previousAgents.split(",").filter((x) => x.trim()).length
         : 0;
 
-      if (selectedSort === "least_worked") {
+      if (selectedSort === "least_worked")
         return (
           countA - countB ||
           new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
         );
-      } else if (selectedSort === "most_worked") {
+      if (selectedSort === "most_worked")
         return (
           countB - countA ||
           new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
         );
-      } else {
-        // Default: Newest first
-        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
-      }
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
 
-    // Update Bulk Assign max math
     const total = filteredLeads.length;
     if (countDisplay) countDisplay.textContent = `of ${total} available`;
     if (qtyInput) {
@@ -2335,14 +2586,18 @@ function renderAssignLeads() {
     if (currentPage > totalPages) currentPage = totalPages;
     if (currentPage < 1) currentPage = 1;
 
-    pageIndicator.textContent = `Page ${currentPage} of ${totalPages}`;
-    tableMetaCount.textContent = `Showing ${total} leads matching filters`;
+    document.getElementById("page-indicator").textContent =
+      `Page ${currentPage} of ${totalPages}`;
+    document.getElementById("table-meta-count").textContent =
+      `Showing ${total} leads matching filters`;
 
-    prevBtn.disabled = currentPage === 1;
-    prevBtn.style.opacity = currentPage === 1 ? "0.4" : "1";
-
-    nextBtn.disabled = currentPage === totalPages;
-    nextBtn.style.opacity = currentPage === totalPages ? "0.4" : "1";
+    document.getElementById("btn-prev-page").disabled = currentPage === 1;
+    document.getElementById("btn-prev-page").style.opacity =
+      currentPage === 1 ? "0.4" : "1";
+    document.getElementById("btn-next-page").disabled =
+      currentPage === totalPages;
+    document.getElementById("btn-next-page").style.opacity =
+      currentPage === totalPages ? "0.4" : "1";
 
     const startIndex = (currentPage - 1) * itemsPerPage;
     const displayLeads = filteredLeads.slice(
@@ -2350,109 +2605,151 @@ function renderAssignLeads() {
       startIndex + itemsPerPage,
     );
 
+    const tbody = document.getElementById("assign-tbody");
     if (displayLeads.length === 0) {
       tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No unassigned leads match these filters!</td></tr>`;
-      return;
-    }
+    } else {
+      tbody.innerHTML = displayLeads
+        .map(function (lead) {
+          const prevArray = lead.previousAgents
+            ? lead.previousAgents.split(",").filter((a) => a.trim() !== "")
+            : [];
+          const prevBadge =
+            prevArray.length > 0
+              ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; cursor:help;">↺ ${prevArray.length} prev agents</span>`
+              : "";
 
-    tbody.innerHTML = displayLeads
-      .map(function (lead) {
-        const prevArray = lead.previousAgents
-          ? lead.previousAgents.split(",").filter((a) => a.trim() !== "")
-          : [];
-        const prevCount = prevArray.length;
-        const prevBadge =
-          prevCount > 0
-            ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; white-space:nowrap; cursor:help;">↺ ${prevCount} prev agent${prevCount > 1 ? "s" : ""}</span>`
-            : "";
-
-        const btnDisplay = lead.BTN || lead.btn || lead.phone || "—";
-
-        return `
+          return `
         <tr>
           <td>
             <div style="display:flex; align-items:center;">
-              <span class="lead-name">${escHtml(lead.name)}</span>
-              ${prevBadge}
+              <span class="lead-name">${escHtml(lead.name)}</span>${prevBadge}
             </div>
           </td>
-          
           <td>${lead.leadType ? `<span class="lead-type-badge lead-type-${(lead.leadType || "").toLowerCase()}">${escHtml(lead.leadType)}</span>` : "—"}</td>
-          <td class="td-mono">${escHtml(btnDisplay)}</td>
+          <td class="td-mono">${escHtml(lead.BTN || lead.btn || lead.phone || "—")}</td>
           <td><span class="status-badge status-${lead.status
             .toLowerCase()
             .replace(/\s+/g, "-")
             .replace(/[^a-z0-9-]/g, "")}">${lead.status}</span></td>
-          
           <td>
             <div class="assign-select-row" style="display:flex; gap:6px; align-items:center; justify-content: flex-end;">
               <select class="filter-select assign-select" id="assign-${lead.id}">
                 <option value="">Select agent</option>
                 ${contractors.map((c) => `<option value="${escHtml(c.name)}">${escHtml(c.name)} (${agentCounts[c.name]} assigned)</option>`).join("")}
               </select>
-              
               <button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="assignLead('${lead.id}')">Assign</button>
-              
-              <button class="btn-secondary" style="padding:6px 14px;font-size:12px" 
-              onclick="renderLeadModal(State.leads.find(l => l.id === '${lead.id}'))">
-                View
-              </button>
             </div>
           </td>
         </tr>`;
-      })
-      .join("");
+        })
+        .join("");
+    }
+
+    PipelineInsights.updateLive(
+      "insights-selector",
+      "insights-canvas",
+      filteredLeads,
+    );
   }
 
-  // 5. Attach Event Listeners
-  if (unworkedCheck) {
-    unworkedCheck.addEventListener("change", () => {
-      currentPage = 1;
-      updateTableAndMath();
-    });
-  }
-  if (typeSelect) {
-    typeSelect.addEventListener("change", () => {
-      currentPage = 1;
-      updateTableAndMath();
-    });
-  }
-  if (stateSelect) {
-    stateSelect.addEventListener("change", () => {
-      currentPage = 1;
-      updateTableAndMath();
-    });
-  }
-  if (batchSelect) {
-    batchSelect.addEventListener("change", () => {
-      currentPage = 1;
-      updateTableAndMath();
-    });
-  }
-  // 🚀 NEW SORT LISTENER
-  if (sortSelect) {
-    sortSelect.addEventListener("change", () => {
-      currentPage = 1;
-      updateTableAndMath();
-    });
-  }
+  PipelineInsights.init(
+    "insights-selector",
+    "insights-canvas",
+    unassigned,
+    false,
+  );
 
-  if (prevBtn) {
-    prevBtn.addEventListener("click", () => {
-      if (currentPage > 1) {
-        currentPage--;
+  // 6. Attach Event Listeners
+  const triggers = [unworkedCheck, typeSelect, stateSelect, sortSelect];
+  triggers.forEach(
+    (el) =>
+      el &&
+      el.addEventListener("change", () => {
+        currentPage = 1;
         updateTableAndMath();
+      }),
+  );
+
+  // 🚀 AGENT READINESS LISTENER
+  const bulkAgentSelect = document.getElementById("bulk-agent-select");
+  const readinessBadge = document.getElementById("agent-readiness-badge");
+
+  if (bulkAgentSelect && readinessBadge) {
+    bulkAgentSelect.addEventListener("change", (e) => {
+      const agentName = e.target.value;
+
+      // If they unselect the agent, hide the badge
+      if (!agentName) {
+        readinessBadge.style.display = "none";
+        return;
+      }
+
+      // 1. Grab all leads assigned to this specific agent
+      const agentLeads = State.leads.filter((l) => l.assignedTo === agentName);
+
+      // 2. Filter out the terminal statuses
+      const nonTerminalLeads = agentLeads.filter(
+        (l) => !Config.terminalStatuses.includes(l.status || "New"),
+      );
+
+      // 3. Filter out cool-off leads using the graph.js logic
+      const actionableLeads = nonTerminalLeads.filter(
+        (l) => !Graph.isInCoolOff(l),
+      );
+
+      const actionableCount = actionableLeads.length;
+
+      // 4. Update the UI
+      readinessBadge.style.display = "inline-flex";
+
+      if (actionableCount === 0) {
+        readinessBadge.textContent = "🟢 Ready for Leads";
+        readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)"; // Soft Green
+        readinessBadge.style.color = "#059669"; // Emerald Text
+      } else {
+        readinessBadge.textContent = `🔴 Not Ready (${actionableCount} Active)`;
+        readinessBadge.style.backgroundColor = "rgba(244, 63, 94, 0.15)"; // Soft Red
+        readinessBadge.style.color = "#E11D48"; // Rose Text
       }
     });
   }
-  if (nextBtn) {
-    nextBtn.addEventListener("click", () => {
-      currentPage++;
+
+  if (batchSelect) {
+    batchSelect.addEventListener("change", () => {
+      updateDynamicDropdowns();
+      currentPage = 1;
       updateTableAndMath();
     });
   }
 
-  // 6. Initialize the math & table on first load
+  if (resetFiltersBtn) {
+    resetFiltersBtn.addEventListener("click", () => {
+      if (batchSelect) batchSelect.value = "all";
+      if (typeSelect) typeSelect.value = "all";
+      if (stateSelect) stateSelect.value = "all";
+      if (sortSelect) sortSelect.value = "newest";
+      if (unworkedCheck) unworkedCheck.checked = false;
+
+      currentPage = 1;
+      updateDynamicDropdowns();
+      updateTableAndMath();
+    });
+  }
+
+  document.getElementById("btn-prev-page").addEventListener("click", () => {
+    if (currentPage > 1) {
+      currentPage--;
+      updateTableAndMath();
+    }
+  });
+  document.getElementById("btn-next-page").addEventListener("click", () => {
+    currentPage++;
+    updateTableAndMath();
+  });
+
+  // 7. Initial Draw
+  updateDynamicDropdowns();
   updateTableAndMath();
 }
 
@@ -2949,7 +3246,6 @@ function renderLeads() {
   let currentBatch = null;
   let legacyCount = 0;
 
-  // Sort master leads by creation date to find natural groupings
   const sortedForBatches = [...State.leads].sort((a, b) => {
     const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -2957,6 +3253,12 @@ function renderLeads() {
   });
 
   sortedForBatches.forEach((l) => {
+    // 🚀 CACHE THE HEAVY MATH ONCE ON LOAD
+    l._time = l.createdAt ? new Date(l.createdAt).getTime() : 0;
+    l._prevCount = l.previousAgents
+      ? l.previousAgents.split(",").filter((x) => x.trim()).length
+      : 0;
+
     if (!l.createdAt) {
       l._batchId = "legacy";
       legacyCount++;
@@ -2977,7 +3279,6 @@ function renderLeads() {
         batches.push(currentBatch);
       }
     }
-    // Tag the lead in RAM so the filter dropdown can find it instantly
     l._batchId = currentBatch.time.toString();
   });
 
@@ -3077,10 +3378,10 @@ function renderLeads() {
   // ==========================================
   // 6. Populate Filters & Dynamic Injection
   // ==========================================
-  const searchInput = clone.getElementById("search-input");
+  const searchInput = clone.getElementById("opt-search-input");
   if (searchInput) searchInput.value = State.filters.search || "";
 
-  const statusFilter = clone.getElementById("filter-status");
+  const statusFilter = clone.getElementById("opt-filter-status");
   Config.leadStatuses.forEach((s) => {
     const option = document.createElement("option");
     option.value = s;
@@ -3089,7 +3390,7 @@ function renderLeads() {
     statusFilter.appendChild(option);
   });
 
-  const agentFilter = clone.getElementById("filter-agent");
+  const agentFilter = clone.getElementById("opt-filter-agent");
   contractors.forEach((c) => {
     const option = document.createElement("option");
     option.value = c;
@@ -3098,7 +3399,6 @@ function renderLeads() {
     agentFilter.appendChild(option);
   });
 
-  // 🚀 THE UI INJECTOR: Auto-creates the new dropdowns right next to the Agent filter
   if (agentFilter && agentFilter.parentNode) {
     const batchOptionsHTML = batches
       .map((b) => {
@@ -3119,6 +3419,9 @@ function renderLeads() {
     const stateOptionsHTML = uniqueStates
       .map((s) => `<option value="${s}">${s}</option>`)
       .join("");
+    const typeOptionsHTML = (Config.leadTypes || [])
+      .map((t) => `<option value="${t}">${t}</option>`)
+      .join("");
 
     agentFilter.parentNode.insertAdjacentHTML(
       "beforeend",
@@ -3127,6 +3430,10 @@ function renderLeads() {
         <option value="all">Any Batch</option>
         ${batchOptionsHTML}
         ${legacyHTML}
+      </select>
+      <select id="filter-type" class="filter-select">
+        <option value="all">Any Type</option>
+        ${typeOptionsHTML}
       </select>
       <select id="filter-state" class="filter-select">
         <option value="all">Any State</option>
@@ -3137,21 +3444,76 @@ function renderLeads() {
         <option value="least_worked">Sort: Least Worked</option>
         <option value="most_worked">Sort: Most Worked</option>
       </select>
+      
+      <button id="leads-reset-filters" class="btn-ghost" style="padding: 6px; margin-left: 4px;" title="Reset Filters">
+        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#64748B" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+      </button>
     `,
     );
   }
 
-  // Grab pointers to the newly injected elements
   const batchFilter = clone.querySelector("#filter-batch");
   const stateFilter = clone.querySelector("#filter-state");
+  const typeFilter = clone.querySelector("#filter-type");
   const sortFilter = clone.querySelector("#filter-sort");
+  const resetFiltersBtn = clone.querySelector("#leads-reset-filters"); // 🚀 Reset Pointer
 
-  // Restore State
   if (batchFilter && State.filters.batch)
     batchFilter.value = State.filters.batch;
   if (stateFilter && State.filters.state)
     stateFilter.value = State.filters.state;
+  if (typeFilter && State.filters.type) typeFilter.value = State.filters.type;
   if (sortFilter && State.filters.sort) sortFilter.value = State.filters.sort;
+
+  // ==========================================
+  // 📊 PIPELINE INSIGHTS INJECTION
+  // ==========================================
+  const tableWrap = clone.getElementById("opt-leads-table-wrap");
+
+  if (tableWrap) {
+    const insightsContainer = document.createElement("div");
+    insightsContainer.style.cssText = "margin-bottom: 28px; padding: 0 4px;";
+    insightsContainer.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h2 style="font-size: 13px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px; margin: 0;">Pipeline Insights</h2>
+        <select id="insights-selector-main" class="form-input" style="width: 220px; padding: 6px 12px; height: auto; font-size: 13px;"></select>
+      </div>
+      <div style="height: 220px; width: 100%;">
+        <canvas id="insights-canvas-main"></canvas>
+      </div>
+    `;
+    tableWrap.parentNode.insertBefore(insightsContainer, tableWrap);
+  }
+
+  // ==========================================
+  // 🧠 CASCADING DROPDOWNS
+  // ==========================================
+  function updateDynamicDropdowns() {
+    const selectedBatch = batchFilter ? batchFilter.value : "all";
+    const currentState = stateFilter ? stateFilter.value : "all";
+
+    const batchLeads = State.leads.filter(
+      (l) => selectedBatch === "all" || l._batchId === selectedBatch,
+    );
+    const availableStates = [
+      ...new Set(
+        batchLeads
+          .map((l) => (l.state || "").trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    ].sort();
+
+    if (stateFilter) {
+      stateFilter.innerHTML =
+        `<option value="all">Any State</option>` +
+        availableStates
+          .map((s) => `<option value="${escHtml(s)}">${escHtml(s)}</option>`)
+          .join("");
+      stateFilter.value = availableStates.includes(currentState)
+        ? currentState
+        : "all";
+    }
+  }
 
   // ==========================================
   // 7. THE SMART PAGINATION RENDERER
@@ -3168,7 +3530,6 @@ function renderLeads() {
     <button id="leads-next-page" class="btn-secondary" style="padding: 6px 12px; font-size:13px;">Next &rarr;</button>
   `;
 
-  const tableWrap = clone.getElementById("leads-table-wrap");
   if (tableWrap) {
     tableWrap.parentNode.insertBefore(paginationWrap, tableWrap.nextSibling);
   }
@@ -3178,13 +3539,12 @@ function renderLeads() {
   const pageIndicator = paginationWrap.querySelector("#leads-page-indicator");
 
   function updateTable() {
-    // A. Grab the base filtered list
     let filtered =
       typeof getFilteredLeads === "function" ? getFilteredLeads() : State.leads;
 
-    // B. Apply Advanced Filters (State & Batch)
     const selectedBatch = batchFilter ? batchFilter.value : "all";
     const selectedState = stateFilter ? stateFilter.value : "all";
+    const selectedType = typeFilter ? typeFilter.value : "all";
     const selectedSort = sortFilter ? sortFilter.value : "newest";
 
     filtered = filtered.filter((l) => {
@@ -3193,10 +3553,13 @@ function renderLeads() {
       const stateMatch =
         selectedState === "all" ||
         (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
-      return batchMatch && stateMatch;
-    });
+      const typeMatch =
+        selectedType === "all" ||
+        (l.leadType && l.leadType.toLowerCase() === selectedType.toLowerCase());
 
-    // C. Apply Advanced Sorting
+      return batchMatch && stateMatch && typeMatch;
+    });
+    /* OLD UNPERFORMANT SORT
     filtered.sort((a, b) => {
       const countA = a.previousAgents
         ? a.previousAgents.split(",").filter((x) => x.trim()).length
@@ -3219,15 +3582,24 @@ function renderLeads() {
         return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
       }
     });
+  */
+    // 🚀 BLAZING FAST SORT (Uses the cached variables)
+    filtered.sort((a, b) => {
+      if (selectedSort === "least_worked") {
+        return a._prevCount - b._prevCount || b._time - a._time;
+      } else if (selectedSort === "most_worked") {
+        return b._prevCount - a._prevCount || b._time - a._time;
+      } else {
+        return b._time - a._time;
+      }
+    });
 
-    // D. Run Pagination Math
     const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / itemsPerPage));
 
     if (currentPage > totalPages) currentPage = totalPages;
     if (currentPage < 1) currentPage = 1;
 
-    // E. Update UI Text & Buttons
     if (pageIndicator)
       pageIndicator.textContent = `Pg ${currentPage} / ${totalPages}`;
 
@@ -3240,16 +3612,22 @@ function renderLeads() {
       nextBtn.style.opacity = currentPage === totalPages ? "0.4" : "1";
     }
 
-    // F. Slice down to 50 items and draw
     const startIndex = (currentPage - 1) * itemsPerPage;
     const displayLeads = filtered.slice(startIndex, startIndex + itemsPerPage);
 
     if (tableWrap) {
       tableWrap.replaceChildren(renderLeadsTable(displayLeads));
     }
+    // 🚀 NON-BLOCKING CHART RENDER: Paints the table instantly, calculates chart math next frame
+    setTimeout(() => {
+      PipelineInsights.updateLive(
+        "insights-selector-main",
+        "insights-canvas-main",
+        filtered,
+      );
+    }, 0);
   }
 
-  // Attach button listeners
   if (prevBtn)
     prevBtn.addEventListener("click", () => {
       if (currentPage > 1) {
@@ -3263,31 +3641,85 @@ function renderLeads() {
       updateTable();
     });
 
-  const handleFilterChange = () => {
-    // 1. Update the global state with the new filter values
+  const handleFilterChange = (e) => {
+    // 1. Instantly save the filter selections to state
     State.filters.search = searchInput ? searchInput.value : "";
     State.filters.status = statusFilter ? statusFilter.value : "all";
     State.filters.assignedTo = agentFilter ? agentFilter.value : "all";
     State.filters.batch = batchFilter ? batchFilter.value : "all";
     State.filters.state = stateFilter ? stateFilter.value : "all";
+    State.filters.type = typeFilter ? typeFilter.value : "all";
     State.filters.sort = sortFilter ? sortFilter.value : "newest";
 
     currentPage = 1;
-    updateTable();
+
+    // If the Batch filter changed, update the cascading options instantly
+    if (e && e.target === batchFilter) {
+      updateDynamicDropdowns();
+    }
+
+    // 🚀 THE PERFORMANCE FIX: Defer the table calculation to the next CPU cycle.
+    // This allows the dropdown menu to visually close smoothly before processing data.
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        updateTable();
+      }, 0);
+    });
   };
 
-  // Wire up the inputs to the interceptor
-  if (searchInput) searchInput.addEventListener("input", handleFilterChange);
+  if (searchInput) {
+    let searchTimeout;
+    searchInput.addEventListener("input", (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        handleFilterChange(e);
+      }, 300); // Waits 300ms after the last keystroke before updating
+    });
+  }
   if (statusFilter) statusFilter.addEventListener("change", handleFilterChange);
   if (agentFilter) agentFilter.addEventListener("change", handleFilterChange);
   if (batchFilter) batchFilter.addEventListener("change", handleFilterChange);
   if (stateFilter) stateFilter.addEventListener("change", handleFilterChange);
+  if (typeFilter) typeFilter.addEventListener("change", handleFilterChange);
   if (sortFilter) sortFilter.addEventListener("change", handleFilterChange);
 
-  updateTable();
+  // 🚀 THE RESET LISTENER (Resets all inputs AND the global State object)
+  if (resetFiltersBtn) {
+    resetFiltersBtn.addEventListener("click", () => {
+      if (searchInput) searchInput.value = "";
+      if (statusFilter) statusFilter.value = "all";
+      if (agentFilter) agentFilter.value = "all";
+      if (batchFilter) batchFilter.value = "all";
+      if (typeFilter) typeFilter.value = "all";
+      if (stateFilter) stateFilter.value = "all";
+      if (sortFilter) sortFilter.value = "newest";
 
-  // 8. Mount!
+      State.filters.search = "";
+      State.filters.status = "all";
+      State.filters.assignedTo = "all";
+      State.filters.batch = "all";
+      State.filters.type = "all";
+      State.filters.state = "all";
+      State.filters.sort = "newest";
+
+      currentPage = 1;
+      updateDynamicDropdowns();
+      updateTable();
+    });
+  }
+
+  updateDynamicDropdowns();
+
   mainContent.appendChild(clone);
+
+  PipelineInsights.init(
+    "insights-selector-main",
+    "insights-canvas-main",
+    State.leads,
+    true,
+  );
+
+  updateTable();
 }
 
 function toggleLeadSelect(id, checked) {
@@ -3545,22 +3977,33 @@ function getFilteredLeads() {
   const { status, search, assignedTo } = State.filters;
   const q = (search || "").trim().toLowerCase();
 
+  // 🚀 FAST PATH: If nothing is filtered, bypass the entire array loop instantly
+  if (!q && status === "all" && assignedTo === "all") {
+    return State.leads;
+  }
+
   return State.leads.filter(function (l) {
-    // 1. Status Match
-    const matchStatus = status === "all" || l.status === status;
+    // 1. Status Match (Instant boolean escape)
+    if (status !== "all" && l.status !== status) return false;
 
-    // 2. Search Match (with safety fallbacks to prevent crashes)
-    const matchSearch =
-      !q ||
-      (l.name && l.name.toLowerCase().includes(q)) ||
-      (l.email && l.email.toLowerCase().includes(q)) ||
-      (l.phone && l.phone.includes(q));
+    // 2. Strict Agent Match (Instant boolean escape)
+    if (assignedTo !== "all" && l.assignedTo !== assignedTo) return false;
 
-    // 3. STRICT Agent Match (No override)
-    const matchAgent = assignedTo === "all" || l.assignedTo === assignedTo;
+    // 3. Targeted Search Match (Only hits this if the lead passed steps 1 & 2)
+    if (q) {
+      const nameMatch = l.name && l.name.toLowerCase().includes(q);
+      const phoneMatch = l.phone && l.phone.includes(q);
 
-    // The lead must pass all three tests to show up on the screen
-    return matchStatus && matchSearch && matchAgent;
+      // Smart matching for your updated billing telephone and contact number metrics
+      const btnMatch = (l.BTN || l.btn) && String(l.BTN || l.btn).includes(q);
+      const cbrMatch = l.cbr && String(l.cbr).includes(q);
+
+      // If it doesn't match any of our target fields, throw it away
+      if (!nameMatch && !phoneMatch && !btnMatch && !cbrMatch) return false;
+    }
+
+    // Lead passed all tests!
+    return true;
   });
 }
 
@@ -5762,7 +6205,7 @@ function collectLeadForm() {
   return fields;
 }
 
-async function deleteLead(id) {
+/*async function deleteLead(id) {
   const lead = State.leads.find(function (l) {
     return l.id === id;
   });
@@ -5778,7 +6221,7 @@ async function deleteLead(id) {
   } finally {
     setLoading(false);
   }
-}
+}*/
 
 function closeModal(event) {
   if (event && event.target !== document.getElementById("modal-overlay"))
