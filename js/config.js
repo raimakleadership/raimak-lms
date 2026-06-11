@@ -24,6 +24,7 @@ const Config = {
       operationsHealth: "534d595e-521a-4f02-af02-23e5ee427a74",
       agentScores: "242d56aa-dfcd-4399-919b-0ce608ec932c",
       agentScoresLedger: "7c6f1604-bd68-4ceb-9f0c-9271faf5e0b8",
+      suspensionsList: "d30048fb-8f64-4ed9-9719-6fec2aaca9a9",
     },
     graphBase: "https://graph.microsoft.com/v1.0",
   },

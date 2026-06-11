@@ -344,11 +344,43 @@ window.addEventListener("DOMContentLoaded", async function () {
     if (redirectResult) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
+
     await LocalDB.init();
     State.currentUser = Auth.getUser();
     State.role = detectRole(State.currentUser);
+
+    // If they aren't suspended, load the rest of the app!
     showAppShell();
     Points.initHUDAutoHider();
+    // ==========================================
+    // 🛑 THE SUSPENSION GATEKEEPER
+    // ==========================================
+    const userEmail = State.currentUser ? State.currentUser.email : null;
+
+    if (userEmail) {
+      // 🚀 Now returns the expiration date instead of true/false
+      const suspensionExpiration = await Graph.checkSuspensionStatus(userEmail);
+
+      if (suspensionExpiration) {
+        const mainContent = document.getElementById("main-content");
+        const template = document.getElementById("tmpl-suspended");
+        const sidebar = document.getElementById("sidebar");
+
+        if (sidebar) sidebar.style.display = "none";
+
+        if (mainContent && template) {
+          mainContent.style.marginLeft = "0";
+          mainContent.style.width = "100%";
+          mainContent.innerHTML = "";
+          mainContent.appendChild(template.content.cloneNode(true));
+
+          // 🚀 Start the clock!
+          startSuspensionCountdown(suspensionExpiration);
+        }
+
+        return;
+      }
+    }
     await loadAllData();
     Points.updateHUD();
     renderDashboard();
@@ -6440,6 +6472,42 @@ function escHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function startSuspensionCountdown(expirationDate) {
+  const end = expirationDate.getTime();
+
+  // Run immediately so there's no 1-second lag, then loop
+  const timer = setInterval(() => {
+    const now = new Date().getTime();
+    const distance = end - now;
+
+    // If the countdown hits zero, refresh the page to let them in!
+    if (distance < 0) {
+      clearInterval(timer);
+      window.location.reload();
+      return;
+    }
+
+    // Math magic
+    const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+    const hours = Math.floor(
+      (distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60),
+    );
+    const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+
+    // Update the DOM safely (adding leading zeros for style)
+    const elDays = document.getElementById("cd-days");
+    const elHours = document.getElementById("cd-hours");
+    const elMins = document.getElementById("cd-mins");
+    const elSecs = document.getElementById("cd-secs");
+
+    if (elDays) elDays.innerText = String(days).padStart(2, "0");
+    if (elHours) elHours.innerText = String(hours).padStart(2, "0");
+    if (elMins) elMins.innerText = String(minutes).padStart(2, "0");
+    if (elSecs) elSecs.innerText = String(seconds).padStart(2, "0");
+  }, 1000);
 }
 
 const UI = {

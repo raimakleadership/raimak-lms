@@ -981,6 +981,98 @@ const Graph = (() => {
     });
   }
 
+  // 🛑 Check SharePoint LMSSuspensions list
+  async function checkSuspensionStatus(agentEmail) {
+    if (!agentEmail) return false;
+
+    try {
+      await resolveSiteIds();
+      const emailLower = agentEmail.toLowerCase().trim();
+
+      const url =
+        base +
+        "/sites/" +
+        siteIds.leadship +
+        "/lists/" +
+        Config.sharePoint.lists.suspensionsList +
+        "/items?expand=fields";
+
+      const response = await apiFetch(url, { method: "GET" });
+      const records = response ? response.value || [] : [];
+
+      if (records.length === 0) return false;
+
+      const now = new Date();
+
+      const parseDuration = (timeString) => {
+        if (!timeString) return 0;
+        const parts = timeString.split(" ");
+        const amount = parseInt(parts[0], 10) || 0;
+        const unit = parts[1] ? parts[1].toLowerCase() : "";
+
+        let days = 0;
+        if (unit.includes("day")) days = amount;
+        if (unit.includes("week")) days = amount * 7;
+
+        return days * 24 * 60 * 60 * 1000;
+      };
+
+      // Loop through records
+      for (let i = 0; i < records.length; i++) {
+        const item = records[i];
+        const fields = item.fields;
+        const lookupId = fields.AgentLookupId;
+
+        // Skip if the team lead left the Person column blank
+        if (!lookupId) continue;
+
+        const createdDate = new Date(item.createdDateTime);
+        const durationMs = parseDuration(fields.SuspensionTime);
+        const expirationDate = new Date(createdDate.getTime() + durationMs);
+
+        // First, check if this suspension record is actually still active time-wise
+        if (now < expirationDate) {
+          // 🚀 THE DECODER: It's an active suspension, so we ask SharePoint who this ID belongs to
+          const userUrl =
+            base +
+            "/sites/" +
+            siteIds.leadship +
+            "/lists/User Information List/items/" +
+            lookupId +
+            "?expand=fields";
+
+          try {
+            const userRes = await apiFetch(userUrl, { method: "GET" });
+            if (userRes && userRes.fields) {
+              // Extract the email from the hidden system list
+              const recordEmail = (userRes.fields.EMail || "")
+                .toLowerCase()
+                .trim();
+
+              // Now we check if it matches the current logged-in agent!
+              if (recordEmail === emailLower) {
+                console.warn(
+                  `Agent is suspended until ${expirationDate.toLocaleString()}`,
+                );
+                return expirationDate;
+              }
+            }
+          } catch (userErr) {
+            console.warn(
+              "Failed to decode AgentLookupId against SharePoint system",
+              userErr,
+            );
+          }
+        }
+      }
+
+      return false; // Time served!
+    } catch (err) {
+      console.error("Failed to check suspension status:", err);
+      return false;
+    }
+  }
+
   function canAgentTakeLead(agentName, leads) {
     const count = leads.filter(function (l) {
       return (
@@ -1076,6 +1168,7 @@ const Graph = (() => {
     getDailyStats,
     resolveSiteIds,
     applyBusinessRules,
+    checkSuspensionStatus,
     canAgentTakeLead,
     isInCoolOff,
     agentContactsToday,
