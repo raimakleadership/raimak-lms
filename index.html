@@ -6,6 +6,7 @@
     <meta name="description" content="Raimak Lead Management System" />
     <title>Raimak LMS</title>
     <link rel="stylesheet" href="css/style.css?v=3.0" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
     <script src="js/config.js?v=4.1"></script>
@@ -146,6 +147,7 @@
               />
             </svg>
             Callbacks
+            <span class="badge" id="badge-callbacks" style="display: none;"></span>
           </a>
           <!-- <a
             class="nav-item admin-only"
@@ -167,6 +169,13 @@
               <polyline points="14 7 21 7 21 14" />
             </svg>
             Stats
+          </a>
+          <a class="nav-item" data-view="comingsoon" onclick='navigate("comingsoon")'>
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 4h12l3 5H3z M10 4l-1 5 M14 4l1 5 M6 9v6 M18 9v6" />
+              <rect x="3" y="15" width="18" height="6" rx="1" />
+            </svg> 
+            Coming Soon 
           </a>
           <a
             class="nav-item admin-only"
@@ -354,11 +363,11 @@
         <div class="spinner"></div>
       </div>
     </div>
-  <div class="sales-ticker-wrap">
-    <div id="sales-ticker-content" class="sales-ticker-content">
-    Loading live stats...
+    <div class="sales-ticker-wrap booting" id="sales-ticker-wrap">
+      <div id="sales-ticker-content" class="sales-ticker-content">
+        Loading live stats...
+      </div>
     </div>
-  </div>
   <div id="economy-hud" class="economy-hud">
       
       <div class="hud-badge">
@@ -792,6 +801,36 @@
           <div id="my-leads-table"></div>
         </div>
       </div>
+    </template>
+
+    <template id="tmpl-shop">
+  <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+    <div>
+      <h1 class="view-title">Rewards Shop</h1>
+      <span class="view-subtitle">Redeem your points for gift cards and payouts</span>
+    </div>
+    <div style="background: #10B981; color: white; padding: 8px 16px; border-radius: 8px; font-weight: bold; font-size: 18px;">
+      💰 <span id="shop-current-balance">0</span> Points
+    </div>
+  </div>
+
+  <div class="shop-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px;">
+    
+    <div class="card shop-item" style="text-align: center; padding: 24px; border: 1px solid #E2E8F0;">
+      <div style="font-size: 40px; margin-bottom: 12px;">💳</div>
+      <h3 style="margin-bottom: 8px; color: #0D1B3E;">$25 Visa Virtual Card</h3>
+      <p style="color: #64748B; font-weight: bold; margin-bottom: 16px;">2,500 Points</p>
+      <button class="btn btn-primary" onclick="Shop.redeemReward('visa_25', 2500)" style="width: 100%;">Redeem</button>
+    </div>
+
+    <div class="card shop-item" style="text-align: center; padding: 24px; border: 1px solid #E2E8F0;">
+      <div style="font-size: 40px; margin-bottom: 12px;">📦</div>
+      <h3 style="margin-bottom: 8px; color: #0D1B3E;">$50 Amazon Gift Card</h3>
+      <p style="color: #64748B; font-weight: bold; margin-bottom: 16px;">5,000 Points</p>
+      <button class="btn btn-primary" onclick="Shop.redeemReward('amazon_50', 5000)" style="width: 100%;">Redeem</button>
+    </div>
+
+  </div>
     </template>
 
     <template id="tmpl-lead-feed-card">
@@ -1278,7 +1317,7 @@
     </template>
   
 <!-- 📊 STATS PAGE TEMPLATE -->
-<template id="tmpl-stats-page">
+  <template id="tmpl-stats-page">
   <div class="page-container fade-in" style="padding: 20px;">
     
     <!-- 🎛️ The Control Panel -->
@@ -1365,6 +1404,109 @@
       </div>
     </div>
   </div>
+  </template>
+
+<template id="tmpl-coming-soon-page">
+  <div id="coming-soon-wrap" class="animate-fade-up" style="position: relative; height: 100%; min-height: 70vh; overflow: hidden; background: #040811; perspective: 1000px; display: flex; align-items: center; justify-content: center; --cursor-x: 50%; --cursor-y: 50%;">
+
+    <div class="data-matrix-bg" style="position: absolute; inset: 0; z-index: 0; background-color: #040811; background-image: radial-gradient(circle at 50% 50%, rgba(0, 212, 255, 0.05) 0%, transparent 60%), linear-gradient(rgba(0, 255, 136, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 255, 136, 0.03) 1px, transparent 1px); background-size: 100% 100%, 40px 40px, 40px 40px;">
+      
+      <div style="position: absolute; top: 15%; left: 10%; font-family: var(--font-mono); color: var(--cyan); opacity: 0.5; font-size: 11px;">
+        > INITIALIZING C# REWARD KERNEL...<br>
+        > ESTABLISHING SECURE UPLINK...<br>
+        > FETCHING [USER_XP_TOTAL]...
+      </div>
+
+      <div style="position: absolute; bottom: 20%; right: 12%; font-family: var(--font-mono); color: var(--green); opacity: 0.4; font-size: 10px; text-align: right;">
+        SYS.NODE.7492 :: ACTIVE<br>
+        await Tremendous.Auth()<br>
+        [ OK ]
+      </div>
+
+      <div class="data-stream" style="left: 20%; animation-delay: 0s;"></div>
+      <div class="data-stream" style="left: 55%; animation-delay: 1.2s; height: 150px;"></div>
+      <div class="data-stream" style="left: 85%; animation-delay: 0.7s;"></div>
+    </div>
+
+    <div style="position: absolute; inset: 0; pointer-events: none; z-index: 1; background: radial-gradient(circle 300px at var(--cursor-x) var(--cursor-y), transparent 0%, rgba(4, 8, 17, 0.95) 40%, #040811 100%);"></div>
+
+    <div id="alarm-flash" style="position: absolute; inset: 0; background: rgba(255, 71, 87, 0.3); z-index: 20; pointer-events: none; opacity: 0;"></div>
+    
+    <div id="denied-stamp" style="position: absolute; z-index: 21; font-family: var(--font-head); font-size: clamp(60px, 8vw, 120px); font-weight: 900; color: var(--red); border: 8px solid var(--red); padding: 20px 40px; border-radius: 20px; text-transform: uppercase; text-shadow: 0 0 40px rgba(255, 71, 87, 0.8); box-shadow: 0 0 40px rgba(255, 71, 87, 0.5), inset 0 0 40px rgba(255, 71, 87, 0.5); transform: scale(3) rotate(-15deg); opacity: 0; pointer-events: none;">
+      ACCESS DENIED
+    </div>
+
+    <div class="vault-card" style="position: relative; z-index: 5; background: var(--card); padding: 60px 48px; border-radius: var(--radius-lg); border: 1px solid var(--cyan); box-shadow: 0 30px 60px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(0, 212, 255, 0.05); text-align: center; max-width: 540px; overflow: hidden; transform-style: preserve-3d; transition: transform 0.1s ease-out; cursor: pointer;">
+      
+      <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(180deg, transparent, rgba(0, 212, 255, 0.03), transparent); background-size: 100% 200%; animation: shimmer 3s linear infinite; pointer-events: none; transform: translateZ(-10px);"></div>
+
+      <div style="font-size: 72px; margin-bottom: 24px; filter: drop-shadow(0 0 16px var(--cyan-glow)); transform: translateZ(40px);">
+        <div style="animation: float-lock 3s ease-in-out infinite;">🔒</div>
+      </div>
+
+      <div style="transform: translateZ(30px);">
+        <h1 class="glitch-text" data-value="WORK IN PROGRESS" style="font-family: var(--font-head); font-size: 42px; font-weight: 700; color: var(--text-1); text-transform: uppercase; letter-spacing: 3px; margin-bottom: 12px; line-height: 1.1; text-shadow: 0 0 20px rgba(255, 255, 255, 0.2); white-space: nowrap; min-height: 48px; display: inline-block;">
+          WORK IN PROGRESS
+        </h1>
+        <p style="font-family: var(--font-mono); font-size: 14px; color: var(--text-2); margin-bottom: 40px; line-height: 1.6;">
+          Project integration is currently <span style="color: var(--cyan); font-weight: 600;">CLASSIFIED</span>. Your accumulated points and XP are actively being logged by the system. Keep grinding.
+        </p>
+      </div>
+
+      <div style="text-align: left; transform: translateZ(20px);">
+        <div style="display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; color: var(--cyan); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px;">
+          <span id="vault-status-text">Status: Decrypting Protocol...</span>
+          <span style="animation: pulse 1s infinite alternate;">85%</span>
+        </div>
+        <div style="width: 100%; background: var(--surface); height: 6px; border-radius: 4px; overflow: hidden; border: 1px solid var(--border-hi);">
+          <div style="width: 85%; background: linear-gradient(90deg, var(--blue-mid), var(--cyan)); height: 100%; box-shadow: 0 0 10px var(--cyan); animation: decryptBar 2s infinite alternate;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes decryptBar { 0% { width: 83%; filter: brightness(1); } 100% { width: 87%; filter: brightness(1.3); } }
+    @keyframes float-lock { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+    
+    /* Flowing Data Streams */
+    .data-stream {
+      position: absolute;
+      top: -100px;
+      width: 2px;
+      height: 100px;
+      background: linear-gradient(to bottom, transparent, var(--cyan), transparent);
+      animation: stream-fall 4s linear infinite;
+      opacity: 0.6;
+    }
+    @keyframes stream-fall {
+      0% { transform: translateY(-100px); }
+      100% { transform: translateY(120vh); }
+    }
+
+    /* The Access Denied Animations */
+    .is-shocked { 
+      animation: vault-shake 0.4s cubic-bezier(.36,.07,.19,.97) both !important; 
+      border-color: var(--red) !important;
+      box-shadow: 0 0 60px rgba(255,71,87,0.6), inset 0 0 20px rgba(255,71,87,0.4) !important;
+    }
+    @keyframes vault-shake {
+      10%, 90% { transform: perspective(1000px) translate3d(-4px, 0, 0); }
+      20%, 80% { transform: perspective(1000px) translate3d(6px, 0, 0); }
+      30%, 50%, 70% { transform: perspective(1000px) translate3d(-12px, 0, 0); }
+      40%, 60% { transform: perspective(1000px) translate3d(12px, 0, 0); }
+    }
+    
+    .is-stamped { animation: stamp-slam 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards !important; }
+    @keyframes stamp-slam {
+      0% { transform: scale(3) rotate(-15deg); opacity: 0; }
+      40% { transform: scale(0.9) rotate(-15deg); opacity: 1; }
+      100% { transform: scale(1) rotate(-15deg); opacity: 1; }
+    }
+
+    .is-flashing { animation: red-flash 0.5s ease-out forwards; }
+    @keyframes red-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+  </style>
 </template>
   </body>
 </html>

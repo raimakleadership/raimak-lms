@@ -25,6 +25,7 @@ const Config = {
       agentScores: "242d56aa-dfcd-4399-919b-0ce608ec932c",
       agentScoresLedger: "7c6f1604-bd68-4ceb-9f0c-9271faf5e0b8",
       suspensionsList: "d30048fb-8f64-4ed9-9719-6fec2aaca9a9",
+      rewardOrdersList: "06A1DC4C-F120-4BF6-9E53-F5ECE25A58BD",
     },
     graphBase: "https://graph.microsoft.com/v1.0",
   },

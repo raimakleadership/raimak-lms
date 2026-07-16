@@ -310,6 +310,57 @@ const PipelineInsights = {
   },
 };
 
+const AgentDirectory = {
+  /**
+   * Translates a full name into an official email using the SharePoint roster.
+   */
+  getEmail: function (fullName) {
+    if (!fullName) return "";
+
+    const searchName = fullName.toLowerCase().trim();
+
+    // 1. Check the local SharePoint roster first
+    if (State.contractors && State.contractors.length > 0) {
+      const found = State.contractors.find(
+        (c) => (c.name || c.Title || "").toLowerCase().trim() === searchName,
+      );
+      if (found && found.email) return found.email;
+    }
+
+    // 2. LEGACY FALLBACK: If not found, use the old assumption (e.g. "Jennifer Smith" -> "j.smith@raimak.com")
+    const parts = searchName.split(" ");
+    if (parts.length > 1) {
+      return `${parts[0].charAt(0)}.${parts[parts.length - 1]}@raimak.com`;
+    }
+    return `${searchName}@raimak.com`;
+  },
+
+  /**
+   * Translates an email into a properly capitalized display name.
+   */
+  getName: function (email) {
+    if (!email) return "Unknown Agent";
+
+    const searchEmail = email.toLowerCase().trim();
+
+    // 1. Check the local SharePoint roster first
+    if (State.contractors && State.contractors.length > 0) {
+      const found = State.contractors.find(
+        (c) => (c.email || "").toLowerCase().trim() === searchEmail,
+      );
+      if (found && (found.name || found.Title))
+        return found.name || found.Title;
+    }
+
+    // 2. LEGACY FALLBACK: If not found, attempt to capitalize the email prefix (e.g. "j.smith" -> "J Smith")
+    const prefix = searchEmail.split("@")[0];
+    const nameParts = prefix.split(".");
+    return nameParts
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  },
+};
+
 function isAdmin() {
   return State.role === "admin";
 }
@@ -574,6 +625,12 @@ function navigate(view) {
     case "report":
       renderDailyReport();
       break;
+    case "shop":
+      renderShop();
+      break;
+    case "comingsoon":
+      renderComingSoon();
+      break;
   }
 }
 
@@ -601,15 +658,19 @@ function renderDashboard() {
     statusCounts[s] = leads.filter((l) => l.status === s).length;
   });
 
+  // 🚀 UPGRADE 1: Translate the sales leaderboard names
   const agentSales = {};
   todaySales.forEach((l) => {
-    if (l.assignedTo)
-      agentSales[l.assignedTo] = (agentSales[l.assignedTo] || 0) + 1;
+    if (l.assignedTo) {
+      const displayName = AgentDirectory.getName(l.assignedTo);
+      agentSales[displayName] = (agentSales[displayName] || 0) + 1;
+    }
   });
 
   const top5 = Object.entries(agentSales)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
+
   // ==========================================
   //  THE NEW RENDER LOGIC
   // ==========================================
@@ -691,9 +752,7 @@ function renderDashboard() {
   const todayStr = new Date().toLocaleDateString();
   const agentUniqueLeads = {};
 
-  const aliasMap = {
-    "j.torres@raimak.com": "JULIAN TORRES",
-  };
+  // ✂️ DELETED: The hardcoded aliasMap is officially dead!
 
   (State.activityLog || []).forEach((log) => {
     let isToday = false;
@@ -709,22 +768,9 @@ function renderDashboard() {
       actionStr === "3rd Contact";
 
     if (isToday && isContact) {
-      let rawAgent = (log.agent || log.AgentEmail || "Unknown")
-        .toLowerCase()
-        .trim();
-
-      let displayName = aliasMap[rawAgent];
-
-      if (!displayName) {
-        const contractor = State.contractors.find(
-          (c) =>
-            (c.email || "").toLowerCase().trim() === rawAgent ||
-            (c.name || "").toLowerCase().trim() === rawAgent,
-        );
-        displayName = contractor
-          ? contractor.name
-          : log.agent || log.AgentEmail || "Unknown";
-      }
+      // 🚀 UPGRADE 2: Cleanly convert the raw agent string into the official display name
+      const rawAgent = log.agent || log.AgentEmail || "Unknown";
+      const displayName = AgentDirectory.getName(rawAgent);
 
       const leadId = log.leadId || log.LeadID;
 
@@ -755,8 +801,6 @@ function renderDashboard() {
       : `<p class="empty-state">No contacts logged yet today.</p>`;
   }
 
-  // ✂️ REMOVED: The dash-recent-table injection
-
   // 5. Inject the Recycle Queue Table
   if (isAdmin() && needRecycle > 0) {
     clone.getElementById("dash-recycle-title").textContent =
@@ -782,7 +826,7 @@ function renderDashboard() {
               <td class="td-mono" style="font-size:11px">${escHtml(l.address || "—")}${l.city ? ", " + escHtml(l.city) : ""}</td>
               <td>
                 <div style="display:flex;flex-direction:column;gap:2px">
-                  ${l.assignedTo ? `<span style="font-size:13px;font-weight:600;color:#1A2640">${escHtml(l.assignedTo)}</span>` : "—"}
+                  ${l.assignedTo ? `<span style="font-size:13px;font-weight:600;color:#1A2640">${escHtml(AgentDirectory.getName(l.assignedTo))}</span>` : "—"}
                   ${l.previousAgents ? `<span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8">Previously: ${escHtml(l.previousAgents)}</span>` : ""}
                 </div>
               </td>
@@ -843,49 +887,59 @@ async function recycleLeadAction(leadId, currentAgent, leadName) {
 }
 
 async function recycleAllLeads() {
-  const recycleLeads = State.leads.filter(function (l) {
+  const recycleLeads = State.leads.filter((l) => {
     return l.flags && l.flags.includes("needs_recycle");
   });
+
   if (!recycleLeads.length) {
     UI.showToast("No leads to recycle.", "info");
     return;
   }
+
+  const leadWord = recycleLeads.length !== 1 ? "leads" : "lead";
+
   if (
     !confirm(
-      "Recycle ALL " +
-        recycleLeads.length +
-        " lead" +
-        (recycleLeads.length !== 1 ? "s" : "") +
-        " in the queue?\n\nThis will:\n• Reset all their statuses to New\n• Unassign them from their current agents\n• Record previous assignment history\n\nThis cannot be undone.",
+      `Recycle ALL ${recycleLeads.length} ${leadWord} in the queue?\n\nThis will:\n• Reset all their statuses to New\n• Unassign them from their current agents\n• Record previous assignment history\n\nThis cannot be undone.`,
     )
-  )
+  ) {
     return;
+  }
+
   setLoading(true);
   try {
-    for (var i = 0; i < recycleLeads.length; i++) {
-      const lead = recycleLeads[i];
-      await Graph.recycleLead(lead.id, lead.assignedTo || "");
-      await Graph.logActivity({
-        LeadID: lead.id,
-        Title: lead.name,
-        ActionType: "Recycled",
-        AgentEmail: (State.currentUser && State.currentUser.email) || "",
-        Notes:
-          "Bulk recycled by admin — previous agent: " +
-          (lead.assignedTo || "unknown"),
-      });
+    // 🚀 THE UPGRADE: Process in concurrent chunks of 10 to prevent SharePoint rate limits
+    const batchSize = 10;
+
+    for (let i = 0; i < recycleLeads.length; i += batchSize) {
+      // Slice out the next 10 leads
+      const chunk = recycleLeads.slice(i, i + batchSize);
+
+      // Process all 10 leads in this chunk at the exact same time
+      await Promise.all(
+        chunk.map(async (lead) => {
+          await Graph.recycleLead(lead.id, lead.assignedTo || "");
+
+          await Graph.logActivity({
+            LeadID: lead.id,
+            Title: lead.name,
+            ActionType: "Recycled",
+            AgentEmail: (State.currentUser && State.currentUser.email) || "",
+            Notes: `Bulk recycled by admin — previous agent: ${lead.assignedTo || "unknown"}`,
+          });
+        }),
+      );
     }
+
     UI.showToast(
-      "Recycled " +
-        recycleLeads.length +
-        " lead" +
-        (recycleLeads.length !== 1 ? "s" : "") +
-        " successfully!",
+      `Recycled ${recycleLeads.length} ${leadWord} successfully!`,
       "success",
     );
+
     await loadAllData();
     renderDashboard();
   } catch (err) {
+    console.error("Bulk Recycle Error:", err);
     UI.showToast("Failed: " + err.message, "error");
   } finally {
     setLoading(false);
@@ -902,16 +956,59 @@ function startSalesFeedPolling() {
   );
 
   async function pollSalesData() {
+    // Don't burn API calls if they minimized the tab
     if (document.visibilityState === "hidden") return;
 
     try {
-      // 🚀 1. Background Sync: Keep the data fresh regardless of the view
+      // 🚀 1. Background Sync: Keep data fresh & Check Suspensions
       const leadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
+      const userEmail = State.currentUser ? State.currentUser.email : null;
 
-      const [updatedLeads, logData] = await Promise.all([
+      const [updatedLeads, logData, suspensionExpiration] = await Promise.all([
         Graph.getLeads(leadsSyncDate, State.leads),
         Graph.getActivityLog(State.lastSyncDate, State.activityLog),
+
+        // 🛡️ THE FIX: Shielded Promise!
+        // If email is missing or the API blips, it safely returns null instead of crashing the sales feed.
+        userEmail
+          ? Graph.checkSuspensionStatus(userEmail).catch((err) => {
+              console.warn("Suspension check skipped/failed this poll:", err);
+              return null;
+            })
+          : Promise.resolve(null),
       ]);
+
+      // 🚨 THE BOUNCER: If suspended mid-session, kick them out!
+      if (suspensionExpiration) {
+        console.warn("Agent suspended mid-session! Locking app.");
+        if (State.salesFeedTimer) clearInterval(State.salesFeedTimer); // Kill the polling loop
+
+        State.isSuspended = true;
+        State.suspensionUntil = suspensionExpiration;
+
+        // 🚀 THE HARD LOCKOUT (Using your boot sequence logic)
+        const mainContent = document.getElementById("main-content");
+        const template = document.getElementById("tmpl-suspended");
+        const sidebar = document.getElementById("sidebar");
+
+        // 1. Physically hide the navigation so they can't escape
+        if (sidebar) sidebar.style.display = "none";
+
+        // 2. Expand the main content to fill the screen and inject the template
+        if (mainContent && template) {
+          mainContent.style.marginLeft = "0";
+          mainContent.style.width = "100%";
+          mainContent.innerHTML = "";
+          mainContent.appendChild(template.content.cloneNode(true));
+
+          // 3. Start the visual countdown
+          if (typeof startSuspensionCountdown === "function") {
+            startSuspensionCountdown(suspensionExpiration);
+          }
+        }
+
+        return; // 🛑 Stop processing the rest of this function instantly
+      }
 
       // State is updated so the next time they click a tab, the data is current
       State.leads = updatedLeads;
@@ -925,8 +1022,8 @@ function startSalesFeedPolling() {
       // 3. Confetti/Ticker logic (Global triggers)
       const newOnes = newSales.filter((l) => !knownSaleIds.has(l.id));
       if (newOnes.length > 0) {
-        if (Ticker && Ticker.update) Ticker.update();
-        if (UI && UI.showConfetti) UI.showConfetti();
+        if (typeof Ticker !== "undefined" && Ticker.update) Ticker.update();
+        if (typeof UI !== "undefined" && UI.showConfetti) UI.showConfetti();
         newOnes.forEach((l) => knownSaleIds.add(l.id));
       }
 
@@ -2704,45 +2801,57 @@ function renderAssignLeads() {
   );
 
   // 🚀 AGENT READINESS LISTENER
-  const bulkAgentSelect = document.getElementById("bulk-agent-select");
+  const agentSelect = document.getElementById("bulk-agent-select");
   const readinessBadge = document.getElementById("agent-readiness-badge");
 
-  if (bulkAgentSelect && readinessBadge) {
-    bulkAgentSelect.addEventListener("change", (e) => {
-      const agentName = e.target.value;
+  if (agentSelect && readinessBadge) {
+    agentSelect.addEventListener("change", (e) => {
+      const selectedAgent = e.target.value;
 
-      // If they unselect the agent, hide the badge
-      if (!agentName) {
+      // Hide badge if no agent is selected
+      if (!selectedAgent) {
         readinessBadge.style.display = "none";
         return;
       }
 
-      // 1. Grab all leads assigned to this specific agent
-      const agentLeads = State.leads.filter((l) => l.assignedTo === agentName);
+      // Calculate how many leads are TRULY workable right now
+      const activeLeadsCount = State.leads.filter((lead) => {
+        // 1. Must be assigned to this specific agent
+        if (lead.assignedTo !== selectedAgent) return false;
 
-      // 2. Filter out the terminal statuses
-      const nonTerminalLeads = agentLeads.filter(
-        (l) => !Config.terminalStatuses.includes(l.status || "New"),
-      );
+        // 2. Must not be in a terminal status (Sold, Dead, etc.)
+        if (Config.terminalStatuses.includes(lead.status || "New"))
+          return false;
 
-      // 3. Filter out cool-off leads using the graph.js logic
-      const actionableLeads = nonTerminalLeads.filter(
-        (l) => !Graph.isInCoolOff(l),
-      );
+        // 3. Must not be in the cool-off period
+        if (Graph.isInCoolOff(lead)) return false;
 
-      const actionableCount = actionableLeads.length;
+        // 🚀 4. THE FIX: Ignore leads with future callback dates
+        if (lead.callbackAt) {
+          const cbTime = new Date(lead.callbackAt).getTime();
+          const nowTime = new Date().getTime();
 
-      // 4. Update the UI
+          // If the callback is in the future, it is NOT an active lead right now
+          if (cbTime > nowTime) {
+            return false;
+          }
+        }
+
+        // If it passes all gates, it is an active, workable lead blocking their queue
+        return true;
+      }).length;
+
+      // Update the UI
       readinessBadge.style.display = "inline-flex";
 
-      if (actionableCount === 0) {
+      if (activeLeadsCount === 0) {
         readinessBadge.textContent = "🟢 Ready for Leads";
-        readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)"; // Soft Green
-        readinessBadge.style.color = "#059669"; // Emerald Text
+        readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
+        readinessBadge.style.color = "#059669";
       } else {
-        readinessBadge.textContent = `🔴 Not Ready (${actionableCount} Active)`;
-        readinessBadge.style.backgroundColor = "rgba(244, 63, 94, 0.15)"; // Soft Red
-        readinessBadge.style.color = "#E11D48"; // Rose Text
+        readinessBadge.textContent = `🔴 Not Ready (${activeLeadsCount} Active)`;
+        readinessBadge.style.backgroundColor = "rgba(244, 63, 94, 0.15)";
+        readinessBadge.style.color = "#E11D48";
       }
     });
   }
@@ -3091,7 +3200,6 @@ function renderCallBacks() {
 
   // 5. Handle the Empty State
   if (callbacks.length === 0) {
-    // NEW: Added the animation class to the empty state so it fades in too!
     wrap.innerHTML = `
       <div class="animate-fade-up" style="padding: 60px 20px; text-align: center; color: #64748b;">
         <div style="font-size: 40px; margin-bottom: 16px;">📅</div>
@@ -3100,31 +3208,50 @@ function renderCallBacks() {
       </div>
     `;
   } else {
-    // 6. Build the Table
+    // 6. Build the Table with Mobile-Responsive CSS injected
     let html = `
-      <table class="animate-fade-up" style="width: 100%; border-collapse: collapse; text-align: left;">
-        <thead>
-          <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px;">
-            <th style="padding: 14px 16px; font-weight: 600;">Scheduled For</th>
-            <th style="padding: 14px 16px; font-weight: 600;">Customer Info</th>
-            <th style="padding: 14px 16px; font-weight: 600;">Status</th>
-            <th style="padding: 14px 16px; font-weight: 600; text-align: right;">Action</th>
-          </tr>
-        </thead>
-        <tbody>
+      <style>
+        .cb-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; }
+        .cb-table th, .cb-table td { padding: 14px 16px; }
+        .cb-date-full { display: inline-block; }
+        .cb-date-short { display: none; }
+        .cb-actions { display: flex; gap: 12px; justify-content: flex-end; }
+        
+        /* Mobile Breakpoint Modifications */
+        @media (max-width: 768px) {
+          .cb-table th, .cb-table td { padding: 12px 10px; }
+          .cb-table th { font-size: 10px !important; padding: 10px 8px; }
+          .cb-date-full { display: none; }
+          .cb-date-short { display: inline-block; }
+          
+          /* Stack the buttons and make them full width of the column */
+          .cb-actions { flex-direction: column; align-items: stretch; gap: 6px; }
+          .cb-actions button { width: 100%; justify-content: center; margin: 0 !important; }
+        }
+      </style>
+      
+      <div class="cb-table-wrap animate-fade-up">
+        <table class="cb-table" style="width: 100%; border-collapse: collapse; text-align: left;">
+          <thead>
+            <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px;">
+              <th style="font-weight: 600;">Scheduled For</th>
+              <th style="font-weight: 600;">Customer Info</th>
+              <th style="font-weight: 600;">Status</th>
+              <th style="font-weight: 600; text-align: right;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
     `;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // NEW: Added the 'index' parameter to the loop so we can multiply it for the staggered delay
     callbacks.forEach((l, index) => {
       // 1. Calculate the actual Action Date
       const actionDate = new Date(l.callbackAt);
       const isInstall = l.status === "Pending Order";
 
       if (isInstall) {
-        // Push the required action to the day AFTER the install
         actionDate.setDate(actionDate.getDate() + 1);
       }
 
@@ -3139,63 +3266,81 @@ function renderCallBacks() {
       if (actionMidnight < today) {
         dateColor = "var(--red, #ef4444)";
         dateWeight = "bold";
-        badge = `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">OVERDUE</span>`;
+        badge = `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; font-weight: bold; white-space: nowrap;">OVERDUE</span>`;
       } else if (actionMidnight.getTime() === today.getTime()) {
         dateColor = "var(--blue, #2563B0)";
         dateWeight = "bold";
-        badge = `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 8px; font-weight: bold;">TODAY</span>`;
+        badge = `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; font-weight: bold; white-space: nowrap;">TODAY</span>`;
       }
 
-      // 3. Format the strings for the UI
-      const dateStr = actionDate.toLocaleDateString([], {
+      // 3. Format strings for UI (Generating both Full and Short versions)
+      const dateStrFull = actionDate.toLocaleDateString([], {
         weekday: "short",
         month: "short",
         day: "numeric",
       });
+      const dateStrShort = actionDate.toLocaleDateString([], {
+        month: "numeric",
+        day: "numeric",
+      }); // e.g., 7/15
+
       const timeStr = actionDate.toLocaleTimeString([], {
-        hour: "2-digit",
+        hour: "numeric",
         minute: "2-digit",
       });
 
-      // ---> THE UI TOUCH SNIPPET <---
-      // Give the agent clear context on the original install date
-      const typeStr = isInstall
-        ? `Install Check (Installed ${new Date(l.callbackAt).toLocaleDateString([], { month: "short", day: "numeric" })})`
+      const installDateStr = new Date(l.callbackAt).toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+      });
+      const typeStrFull = isInstall
+        ? `Install Check (Installed ${installDateStr})`
         : "Scheduled Call";
+      const typeStrShort = isInstall ? `Install Check` : "Scheduled Call";
 
       const statusCls = `status-${(l.status || "")
         .toLowerCase()
         .replace(/\s+/g, "-")
         .replace(/[^a-z0-9-]/g, "")}`;
 
-      // NEW: Added the animate-fade-up class and the dynamic staggered delay using the index
       html += `
         <tr class="animate-row-fade" style="border-bottom: 1px solid #f1f5f9; transition: background 0.2s; animation-delay: ${index * 0.05 + 0.1}s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='white'">
-          <td style="padding: 16px; font-size: 13px; color: ${dateColor}; font-weight: ${dateWeight};">
-            <div style="display: flex; align-items: center; font-size: 14px;">${dateStr} @ ${timeStr} ${badge}</div>
-            <div style="font-size: 11px; color: #64748b; margin-top: 4px; font-weight: normal; text-transform: uppercase;">${typeStr}</div>
+          
+          <td style="font-size: 13px; color: ${dateColor}; font-weight: ${dateWeight};">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; font-size: 14px; gap: 4px;">
+              <span class="cb-date-full">${dateStrFull} @ ${timeStr}</span>
+              <span class="cb-date-short">${dateStrShort} @ ${timeStr}</span>
+              ${badge}
+            </div>
+            <div class="cb-date-full" style="font-size: 11px; color: #64748b; margin-top: 4px; font-weight: normal; text-transform: uppercase;">${typeStrFull}</div>
+            <div class="cb-date-short" style="font-size: 11px; color: #64748b; margin-top: 4px; font-weight: normal; text-transform: uppercase;">${typeStrShort}</div>
           </td>
-          <td style="padding: 16px;">
+          
+          <td>
             <div style="font-size: 14px; font-weight: 600; color: #0a1a3f;">${escHtml(l.name || "Unknown")}</div>
-            <div style="font-size: 12px; color: #64748b; margin-top: 2px;">📞 ${escHtml(l.cbr || "No Phone Number")}</div>
+            <div style="font-size: 12px; color: #64748b; margin-top: 2px; white-space: nowrap;">📞 ${escHtml(l.cbr || "No Phone Number")}</div>
           </td>
-          <td style="padding: 16px;">
+          
+          <td>
             <span class="status-badge ${statusCls}">${l.status}</span>
           </td>
-          <td style="padding: 16px; text-align: right; white-space: nowrap;">
-            <button class="btn-secondary" style="font-size: 12px; padding: 6px 12px; margin-right: 8px;" onclick="viewCallbackLead('${l.id}')">
-              View Callback
-            </button>
-            <button class="btn-primary" style="font-size: 12px; padding: 6px 12px;" onclick="workCallbackLead('${l.id}')">
-              Work Callback
-            </button>
+          
+          <td style="padding: 16px; vertical-align: middle;">
+            <div class="cb-actions">
+              <button class="btn-secondary" style="min-width: 90px; justify-content: center; letter-spacing: 1px;" onclick="viewCallbackLead('${l.id}')">
+                View
+              </button>
+              <button class="btn-primary" style="min-width: 90px; justify-content: center; letter-spacing: 1px;" onclick="workCallbackLead('${l.id}')">
+                Work
+              </button>
+            </div>
           </td>
-          </td>
+          
         </tr>
       `;
     });
 
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     wrap.innerHTML = html;
   }
 
@@ -3254,7 +3399,7 @@ function completeCallbackLead(leadId) {
   // 3. Reset all our bypass flags so the Bouncer wakes back up
   window._isWorkingCallback = false;
   window._forceShowLead = false;
-
+  updateBadges();
   // 4. Send them back to their pipeline
   navigate("callbacks");
 }
@@ -3867,15 +4012,21 @@ async function bulkAssign() {
 
   setLoading(true);
   try {
-    // 🚀 THE UPGRADE: Promise.all processes the entire batch concurrently instead of one-by-one
+    // 🚀 THE UPGRADE: Promise.all processes the entire batch concurrently
     await Promise.all(
       ids.map(async (id) => {
-        // Pass null to SharePoint if unassigning, otherwise pass the agent's name
-        const targetAgent = isUnassigning ? null : agent;
-        await Graph.assignAgent(id, targetAgent);
+        if (isUnassigning) {
+          // Unassigning: Clear the agent AND reset status in ONE network call
+          await Graph.updateLead(id, {
+            Agent_x0020_Assigned: null, // (Or "", depending on your SP column rules)
+            Status: "New",
+          });
+        } else {
+          // Assigning: Just run your standard assign method
+          await Graph.assignAgent(id, agent);
+        }
       }),
     );
-
     const successAction = isUnassigning ? "Unassigned" : `Assigned to ${agent}`;
     UI.showToast(
       `Successfully ${successAction}: ${ids.length} ${leadWord}!`,
@@ -3951,56 +4102,59 @@ function bulkExportSelected() {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // 📝 THE UPGRADE: Stripped Email, added BTN & CBR
+  // 📝 THE UPGRADE: Headers match the D2D Export perfectly
   const headers = [
-    "Name",
-    "Type",
+    "First Name",
+    "Last Name",
+    "Address",
+    "City",
+    "State",
     "BTN",
     "CBR",
-    "Status",
-    "Source",
-    "Assigned To",
-    "MRC",
-    "Current Products",
-    "Last Contacted",
-    "Notes",
+    "currentMRC",
+    "currentProducts",
   ];
 
-  const csv = [headers.join(",")]
-    .concat(
-      leads.map((l) => {
-        // 🛡️ Safe fallbacks to catch any capitalization quirks
-        const btn = l.BTN || l.btn || l.phone || "";
-        const cbr = l.CBR || l.cbr || l.altPhone || "";
-        const mrc = l.currentMRC || l.mrc || "";
-        const products = l.currentProducts || l.products || "";
+  // Map the exact same fields as exportD2DLeads
+  const rows = leads.map((l) => {
+    const firstName = l.firstName || "";
+    const lastName = l.lastName || "";
+    const address = l.address || "";
+    const city = l.city || "";
+    const state = l.state || "";
+    const btn = l.BTN || l.btn || l.phone || "";
+    const cbr = l.CBR || l.cbr || l.altPhone || "";
 
-        return [
-          l.name,
-          l.leadType,
-          btn,
-          cbr,
-          l.status,
-          l.source,
-          l.assignedTo,
-          mrc,
-          products,
-          l.lastContacted,
-          l.notes,
-        ]
-          .map((v) => '"' + String(v || "").replace(/"/g, '""') + '"')
-          .join(",");
-      }),
-    )
-    .join("\n");
+    // 💰 THE MRC UPGRADE: Append AP or CC based on Autopay type
+    let mrc = l.currentMRC || l.mrc || "";
+    if (l.autoPay === "ACH - Debit Card") {
+      mrc = mrc ? `${mrc} AP` : "AP";
+    } else if (l.autoPay === "ACH - Credit Card") {
+      mrc = mrc ? `${mrc} CC` : "CC";
+    }
 
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = `raimak-leads-selected-${today}.csv`;
-  a.click();
+    const products = l.currentProducts || l.products || "";
 
-  // 🧹 Clean up the local memory blob
-  URL.revokeObjectURL(a.href);
+    // 🛡️ Format as clean, quote-wrapped CSV row
+    return `"${firstName}","${lastName}","${address}","${city}","${state}","${btn}","${cbr}","${mrc}","${products}"`;
+  });
+
+  // Stitch it all together
+  const csvContent = headers.join(",") + "\n" + rows.join("\n");
+
+  // Create the download blob
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `raimak-leads-selected-${today}.csv`);
+
+  // Append, click, and clean up (Firefox safe!)
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 
   UI.showToast(`Exported ${leads.length} leads!`, "success");
 }
@@ -4978,56 +5132,16 @@ function renderActivity() {
     return;
   }
 
-  const { activityLog, contractors } = State;
+  const { activityLog } = State;
 
-  // 1. THE PREDICTABLE IDENTITY MAP
-  const identityMap = {};
+  // ✂️ DELETED: The Predictable Identity Map and Bulletproof Normalizer are completely gone!
+  // AgentDirectory now handles all of this globally.
 
-  function getStandardEmail(name) {
-    if (!name) return "";
-    const parts = name.trim().toLowerCase().split(/\s+/);
-    if (parts.length >= 2) {
-      return `${parts[0].charAt(0)}.${parts[parts.length - 1]}@raimak.com`;
-    }
-    return "";
-  }
-
-  function registerPerson(name, knownEmail) {
-    if (!name) return;
-    const officialName = name.trim();
-    const lowerName = officialName.toLowerCase();
-
-    identityMap[lowerName] = officialName;
-
-    const generatedEmail = getStandardEmail(officialName);
-    if (generatedEmail) identityMap[generatedEmail] = officialName;
-
-    if (knownEmail) identityMap[knownEmail.trim().toLowerCase()] = officialName;
-  }
-
-  (contractors || []).forEach((c) => registerPerson(c.name, c.email));
-
-  const user = State.currentUser;
-  if (user) registerPerson(user.name, user.email);
-
-  // 2. THE BULLETPROOF NORMALIZER
-  function getCleanAgentName(rawString) {
-    if (!rawString) return "";
-    const cleanString = rawString.trim().toLowerCase();
-
-    if (identityMap[cleanString]) {
-      return identityMap[cleanString];
-    }
-
-    return rawString.trim().replace(/\w\S*/g, function (txt) {
-      return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
-    });
-  }
-
-  // 3. EXTRACT UNIQUE DATA FOR DROPDOWNS
+  // 1. EXTRACT UNIQUE DATA FOR DROPDOWNS
   const uniqueAgents = [
     ...new Set(
-      activityLog.map((e) => getCleanAgentName(e.agent)).filter(Boolean),
+      // 🚀 UPGRADE: Cleanly extract the official names for the dropdown
+      activityLog.map((e) => AgentDirectory.getName(e.agent)).filter(Boolean),
     ),
   ].sort();
 
@@ -5142,8 +5256,10 @@ function renderActivity() {
 
     // Step A: Filter by Agent, Action, AND Date
     let processedLog = activityLog.filter(function (e) {
+      // 🚀 UPGRADE: Match using the global directory
       const matchAgent =
-        selectedAgent === "all" || getCleanAgentName(e.agent) === selectedAgent;
+        selectedAgent === "all" ||
+        AgentDirectory.getName(e.agent) === selectedAgent;
       const matchAction =
         selectedAction === "all" || (e.action || "").trim() === selectedAction;
 
@@ -5198,7 +5314,8 @@ function renderActivity() {
           <td class="td-mono">${formatDateTime(e.timestamp)}</td>
           <td>${escHtml(e.leadName || e.leadId || "—")}</td>
           <td><span class="action-badge">${escHtml(e.action || "—")}</span></td>
-          <td>${escHtml(getCleanAgentName(e.agent) || "—")}</td>
+          <!-- 🚀 UPGRADE: Clean name format in the table row -->
+          <td>${escHtml(AgentDirectory.getName(e.agent) || "—")}</td>
           <td class="td-notes" style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escHtml(e.notes || "")}</td>
         </tr>`;
       })
@@ -5212,11 +5329,12 @@ function renderActivity() {
     const entry = activityLog[rawIndex];
     if (!entry) return;
 
-    const currentAgent = getCleanAgentName(entry.agent);
+    // 🚀 UPGRADE: Clean modal logic
+    const currentAgent = AgentDirectory.getName(entry.agent);
 
     // Grab all logs for this specific agent and sort newest -> oldest
     const agentLogs = activityLog
-      .filter((e) => getCleanAgentName(e.agent) === currentAgent)
+      .filter((e) => AgentDirectory.getName(e.agent) === currentAgent)
       .sort(
         (a, b) =>
           new Date(b.timestamp || 0).getTime() -
@@ -5723,54 +5841,18 @@ function getAgentStats(targetEmail, timeframe = "day") {
   let agentMap = {};
 
   (State.activityLog || []).forEach((log) => {
-    let cleanRaw = (log.agentEmail || log.agent || "").toLowerCase().trim();
-    if (!cleanRaw) return;
+    const rawAgentInput = (log.agentEmail || log.agent || "")
+      .toLowerCase()
+      .trim();
+    if (!rawAgentInput) return;
 
-    // 🛑 THE IDENTITY RESOLVER: Match raw logs to official contractors
-    const aliasMap = {
-      "everett henry": "h.gatlin@raimak.com",
-      "julian torres": "j.torres@raimak.com",
-      "tory mathis": "t.mathis@raimak.com",
-      "stephanie balleste": "s.balleste@raimak.com",
-      "brianna woodall": "b.woodall@raimak.com",
-      // You can easily add any future rogue names right here!
-    };
+    // 🚀 UPGRADE 1: Replace the entire manual Identity Resolver with our robust utility
+    // If it's already an email, getEmail will safely pass it through or resolve it.
+    // If it's a name, it will cleanly convert it to the official email!
+    const finalEmail = AgentDirectory.getEmail(rawAgentInput);
 
-    if (aliasMap[cleanRaw]) {
-      cleanRaw = aliasMap[cleanRaw];
-    }
-
-    let finalEmail = cleanRaw;
-    let knownName = "";
-
-    // ... (the rest of the matching logic stays exactly the same)
-
-    const matchedContractor = (State.contractors || []).find(
-      (c) =>
-        (c.email || "").toLowerCase().trim() === cleanRaw ||
-        (c.name || "").toLowerCase().trim() === cleanRaw,
-    );
-
-    if (matchedContractor) {
-      finalEmail = (matchedContractor.email || finalEmail).toLowerCase().trim();
-      knownName = matchedContractor.name;
-    } else {
-      // Fallback formatters if they somehow aren't in the contractor list
-      if (!cleanRaw.includes("@")) {
-        const parts = cleanRaw.split(/\s+/);
-        if (parts.length >= 2)
-          finalEmail = `${parts[0][0]}.${parts[parts.length - 1]}@raimak.com`;
-        knownName = cleanRaw.replace(
-          /\w\S*/g,
-          (txt) => txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase(),
-        );
-      } else {
-        const prefix = cleanRaw.split("@")[0].split(".");
-        knownName = prefix
-          .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-          .join(" ");
-      }
-    }
+    // 🚀 Get the official display name for leaderboards
+    const knownName = AgentDirectory.getName(finalEmail);
 
     const logEmail = finalEmail;
     if (!isAllAgents && logEmail !== target) return;
@@ -5799,7 +5881,7 @@ function getAgentStats(targetEmail, timeframe = "day") {
 
       if (isAllAgents && !agentMap[logEmail]) {
         agentMap[logEmail] = {
-          name: knownName || log.agentName || logEmail,
+          name: knownName, // Use our perfectly capitalized name
           sales: 0,
           uniqueLeads: new Set(),
         };
@@ -5908,14 +5990,16 @@ function getAgentStats(targetEmail, timeframe = "day") {
     const recordTracker = new Set();
 
     (State.activityLog || []).forEach((log) => {
-      let rawAgent = (log.agentEmail || log.agent || "").toLowerCase().trim();
-      if (rawAgent && !rawAgent.includes("@")) {
-        const nameParts = rawAgent.split(/\s+/);
-        if (nameParts.length >= 2)
-          rawAgent = `${nameParts[0][0]}.${nameParts[nameParts.length - 1]}@raimak.com`;
-      }
+      const rawAgent = (log.agentEmail || log.agent || "").toLowerCase().trim();
 
-      if (rawAgent !== target || !log.action || !log.action.includes("Sold"))
+      // 🚀 UPGRADE 2: Use the exact same directory fetcher here to ensure consistency
+      const standardizedEmail = AgentDirectory.getEmail(rawAgent);
+
+      if (
+        standardizedEmail !== target ||
+        !log.action ||
+        !log.action.includes("Sold")
+      )
         return;
 
       const logMs =
@@ -5967,6 +6051,479 @@ function getAgentStats(targetEmail, timeframe = "day") {
   };
 }
 
+// Global variable to track the hold-to-redeem timer
+let shopHoldTimer = null;
+
+function renderShop() {
+  const mainContent = document.getElementById("main-content");
+  const template = document.getElementById("tmpl-shop");
+
+  if (!template) return;
+  mainContent.innerHTML = "";
+  const shopView = template.content.cloneNode(true);
+
+  const currentPoints = Points.currentBalance || 0;
+
+  const balanceDisplay = shopView.querySelector("#shop-current-balance");
+  if (balanceDisplay) balanceDisplay.innerText = currentPoints.toLocaleString();
+
+  const catalog = [
+    // ==========================================
+    // 🥉 $25 REWARD TIER (11,250 Points)
+    // ==========================================
+
+    // update the amazon_25 value on both this script and in the power automate reward map to the proper value after testing
+    { id: "amazon_25", name: "$25 Amazon Gift Card", cost: 11250, icon: "📦" },
+    { id: "amc_25", name: "$25 AMC Theatres", cost: 11250, icon: "🍿" },
+    { id: "apple_25", name: "$25 Apple Gift Card", cost: 11250, icon: "🍎" },
+    { id: "doordash_25", name: "$25 DoorDash", cost: 11250, icon: "🍔" },
+    { id: "dunkin_25", name: "$25 Dunkin'", cost: 11250, icon: "🍩" },
+    { id: "ebay_25", name: "$25 eBay", cost: 11250, icon: "🛍️" },
+    { id: "googleplay_25", name: "$25 Google Play", cost: 11250, icon: "📱" },
+    { id: "playstation_25", name: "$25 PlayStation", cost: 11250, icon: "🎮" },
+    { id: "samsclub_25", name: "$25 Sam's Club", cost: 11250, icon: "🛒" },
+    { id: "starbucks_25", name: "$25 Starbucks", cost: 11250, icon: "☕" },
+    { id: "target_25", name: "$25 Target", cost: 11250, icon: "🎯" },
+    { id: "ubereats_25", name: "$25 Uber Eats", cost: 11250, icon: "🚗" },
+    { id: "visa_25", name: "$25 Visa Virtual Card", cost: 11250, icon: "💳" },
+    { id: "walmart_25", name: "$25 Walmart", cost: 11250, icon: "🏪" },
+    { id: "xbox_25", name: "$25 Xbox", cost: 11250, icon: "🟩" },
+
+    // ==========================================
+    // 🥈 $50 REWARD TIER (20,750 Points)
+    // ==========================================
+    { id: "amazon_50", name: "$50 Amazon Gift Card", cost: 20750, icon: "📦" },
+    { id: "amc_50", name: "$50 AMC Theatres", cost: 20750, icon: "🍿" },
+    { id: "apple_50", name: "$50 Apple Gift Card", cost: 20750, icon: "🍎" },
+    { id: "doordash_50", name: "$50 DoorDash", cost: 20750, icon: "🍔" },
+    { id: "dunkin_50", name: "$50 Dunkin'", cost: 20750, icon: "🍩" },
+    { id: "ebay_50", name: "$50 eBay", cost: 20750, icon: "🛍️" },
+    { id: "googleplay_50", name: "$50 Google Play", cost: 20750, icon: "📱" },
+    { id: "playstation_50", name: "$50 PlayStation", cost: 20750, icon: "🎮" },
+    { id: "samsclub_50", name: "$50 Sam's Club", cost: 20750, icon: "🛒" },
+    { id: "starbucks_50", name: "$50 Starbucks", cost: 20750, icon: "☕" },
+    { id: "target_50", name: "$50 Target", cost: 20750, icon: "🎯" },
+    { id: "ubereats_50", name: "$50 Uber Eats", cost: 20750, icon: "🚗" },
+    { id: "visa_50", name: "$50 Visa Virtual Card", cost: 20750, icon: "💳" },
+    { id: "walmart_50", name: "$50 Walmart", cost: 20750, icon: "🏪" },
+    { id: "xbox_50", name: "$50 Xbox", cost: 20750, icon: "🟩" },
+
+    // ==========================================
+    // 🥇 $100 REWARD TIER (38,500 Points)
+    // ==========================================
+    {
+      id: "amazon_100",
+      name: "$100 Amazon Gift Card",
+      cost: 38500,
+      icon: "📦",
+    },
+    { id: "amc_100", name: "$100 AMC Theatres", cost: 38500, icon: "🍿" },
+    { id: "apple_100", name: "$100 Apple Gift Card", cost: 38500, icon: "🍎" },
+    { id: "doordash_100", name: "$100 DoorDash", cost: 38500, icon: "🍔" },
+    { id: "dunkin_100", name: "$100 Dunkin'", cost: 38500, icon: "🍩" },
+    { id: "ebay_100", name: "$100 eBay", cost: 38500, icon: "🛍️" },
+    { id: "googleplay_100", name: "$100 Google Play", cost: 38500, icon: "📱" },
+    {
+      id: "playstation_100",
+      name: "$100 PlayStation",
+      cost: 38500,
+      icon: "🎮",
+    },
+    { id: "samsclub_100", name: "$100 Sam's Club", cost: 38500, icon: "🛒" },
+    { id: "starbucks_100", name: "$100 Starbucks", cost: 38500, icon: "☕" },
+    { id: "target_100", name: "$100 Target", cost: 38500, icon: "🎯" },
+    { id: "ubereats_100", name: "$100 Uber Eats", cost: 38500, icon: "🚗" },
+    { id: "visa_100", name: "$100 Visa Virtual Card", cost: 38500, icon: "💳" },
+    { id: "walmart_100", name: "$100 Walmart", cost: 38500, icon: "🏪" },
+    { id: "xbox_100", name: "$100 Xbox", cost: 38500, icon: "🟩" },
+  ];
+
+  // 1. Split the catalog into tiers
+  const tier25 = catalog.filter((item) => item.cost <= 11250);
+  const tier50 = catalog.filter((item) => item.cost === 20750);
+  const tier100 = catalog.filter((item) => item.cost === 38500);
+
+  // 2. Helper function containing your exact card logic
+  function renderGrid(items) {
+    return `
+      <div class="shop-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px;">
+        ${items
+          .map(function (item) {
+            const canAfford = currentPoints >= item.cost;
+            const isLegendary = item.cost >= 21000;
+            const isWayOutOfReach = currentPoints < item.cost * 0.7;
+
+            // Generate a random negative delay between 0s and -3s
+            const shineDelay = isLegendary
+              ? `-${(Math.random() * 3).toFixed(2)}s`
+              : "0s";
+
+            const btnClass = canAfford
+              ? "btn-primary btn-hold"
+              : "btn-disabled";
+            const cardClass = `card shop-item ${isLegendary ? "card-legendary" : ""}`;
+
+            // We drop the opacity of the main content if it's locked so the padlock stands out
+            const mainOpacity = isWayOutOfReach
+              ? "0.3"
+              : canAfford
+                ? "1"
+                : "0.7";
+            const cardBorder = canAfford
+              ? isLegendary
+                ? ""
+                : "#10B981"
+              : "#94A3B8";
+
+            return `
+          <div class="shop-item-wrapper" 
+               onmousemove="handleCardTilt(event, this)" 
+               onmouseleave="resetCardTilt(this)">
+               
+            <div class="${cardClass}" id="card-${item.id}"
+                 style="text-align: center; padding: 24px; border: 1px solid #E2E8F0; ${cardBorder ? `border-top: 4px solid ${cardBorder};` : ""} --shine-delay: ${shineDelay};">
+              
+              ${
+                isWayOutOfReach
+                  ? `
+                <div class="frosted-overlay" style="transform: translateZ(30px);">
+                  <div class="lock-icon">🔒</div>
+                  <div class="lock-text">LOCKED</div>
+                </div>
+              `
+                  : ""
+              }
+
+              <div style="opacity: ${mainOpacity}; transition: opacity 0.3s;">
+                <div style="font-size: 40px; margin-bottom: 12px; transform: translateZ(20px);">${item.icon}</div>
+                <h3 style="margin-bottom: 8px; color: ${canAfford ? "#0D1B3E" : "#64748B"}; transform: translateZ(15px);">${item.name}</h3>
+                <p style="color: ${canAfford ? (isLegendary ? "#EAB308" : "#10B981") : "#94A3B8"}; font-weight: bold; margin-bottom: 16px; transform: translateZ(10px);">
+                  ${item.cost.toLocaleString()} Points
+                </p>
+              </div>
+              
+              <button class="btn ${btnClass}" style="width: 100%; transform: translateZ(25px);" 
+                      onmousedown="startHoldToRedeem('${item.id}', ${item.cost}, this)" 
+                      onmouseup="cancelHoldToRedeem(this)" 
+                      onmouseleave="cancelHoldToRedeem(this)"
+                      ontouchstart="startHoldToRedeem('${item.id}', ${item.cost}, this)"
+                      ontouchend="cancelHoldToRedeem(this)">
+                <div class="btn-fill"></div>
+                <span class="btn-text">${canAfford ? "Hold to Redeem" : "Need more points"}</span>
+              </button>
+            </div>
+          </div>`;
+          })
+          .join("")}
+      </div>`;
+  }
+
+  // 3. Inject the tiered layout into the original grid container
+  const gridContainer = shopView.querySelector(".shop-grid");
+  if (gridContainer) {
+    // Strip original class so it acts as a block wrapper, not a CSS grid
+    gridContainer.className = "shop-tiers-container";
+    gridContainer.style.display = "block";
+
+    gridContainer.innerHTML = `
+      <!-- BRONZE TIER -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-radius: 8px; margin: 8px 0 16px 0; color: #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); background: linear-gradient(135deg, #b87333 0%, #d49a6a 100%); border-bottom: 3px solid #8c5523;">
+        <h2 style="margin: 0; font-size: 18px; font-weight: 700;">🥉 $25 Rewards</h2>
+        <span style="font-family: var(--font-mono, monospace); font-size: 14px; font-weight: 600; background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 20px;">11,250 PTS</span>
+      </div>
+      ${renderGrid(tier25)}
+
+      <!-- SILVER TIER -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-radius: 8px; margin: 32px 0 16px 0; color: #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); background: linear-gradient(135deg, #718096 0%, #a0aec0 100%); border-bottom: 3px solid #4a5568;">
+        <h2 style="margin: 0; font-size: 18px; font-weight: 700;">🥈 $50 Rewards</h2>
+        <span style="font-family: var(--font-mono, monospace); font-size: 14px; font-weight: 600; background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 20px;">20,750 PTS</span>
+      </div>
+      ${renderGrid(tier50)}
+
+      <!-- GOLD TIER -->
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; border-radius: 8px; margin: 32px 0 16px 0; color: #fff; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); background: linear-gradient(135deg, #d4af37 0%, #f3e5ab 100%); border-bottom: 3px solid #aa8c2c;">
+        <h2 style="margin: 0; font-size: 18px; font-weight: 700;">🥇 $100 Rewards</h2>
+        <span style="font-family: var(--font-mono, monospace); font-size: 14px; font-weight: 600; background: rgba(255,255,255,0.2); padding: 4px 10px; border-radius: 20px;">38,500 PTS</span>
+      </div>
+      ${renderGrid(tier100)}
+    `;
+  }
+
+  mainContent.appendChild(shopView);
+}
+
+// --- 🎮 3D TILT ENGINE ---
+function handleCardTilt(e, wrapper) {
+  const card = wrapper.querySelector(".shop-item");
+  const rect = wrapper.getBoundingClientRect();
+
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const centerX = rect.width / 2;
+  const centerY = rect.height / 2;
+
+  const rotateX = ((y - centerY) / centerY) * -8;
+  const rotateY = ((x - centerX) / centerX) * 8;
+
+  card.style.transition = "none";
+  card.style.transform = `rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.02, 1.02, 1.02)`;
+  card.style.boxShadow = `${-rotateY}px ${rotateX}px 20px rgba(0,0,0,0.1)`;
+
+  // 🔦 Inject the spotlight coordinates dynamically!
+  card.style.setProperty("--mouse-x", `${x}px`);
+  card.style.setProperty("--mouse-y", `${y}px`);
+}
+
+function resetCardTilt(wrapper) {
+  const card = wrapper.querySelector(".shop-item");
+  card.style.transition =
+    "transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s ease";
+  card.style.transform = `rotateX(0) rotateY(0) scale3d(1, 1, 1)`;
+  card.style.boxShadow = "none";
+}
+
+function spawnCombatText(btnEl, textStr) {
+  const rect = btnEl.getBoundingClientRect();
+  const text = document.createElement("div");
+  text.className = "combat-text";
+  text.innerText = textStr;
+
+  // Spawn exactly in the middle of the button they just clicked
+  text.style.left = `${rect.left + rect.width / 2 - 40}px`;
+  text.style.top = `${rect.top - 10}px`;
+
+  document.body.appendChild(text);
+
+  // Clean it up after the animation completes
+  setTimeout(() => text.remove(), 800);
+}
+// --- ⏱️ HOLD-TO-REDEEM ENGINE ---
+function startHoldToRedeem(rewardId, cost, btnEl) {
+  const currentPoints = Points.currentBalance || 0;
+  const card = btnEl.closest(".shop-item");
+
+  // 1. 🛑 THE BROKE SHAKE & COMBAT TEXT
+  if (currentPoints < cost) {
+    card.classList.remove("shake-error");
+    void card.offsetWidth; // Force DOM reflow to restart animation
+    card.classList.add("shake-error");
+
+    // 💥 Fire the combat text!
+    spawnCombatText(btnEl, "Not Enough!");
+
+    // 🧹 THE FIX: Remove the red border class after the 400ms shake finishes!
+    setTimeout(() => {
+      if (card) card.classList.remove("shake-error");
+    }, 400);
+
+    return;
+  }
+
+  // 2. Start the progress bar fill
+  const fill = btnEl.querySelector(".btn-fill");
+  const text = btnEl.querySelector(".btn-text");
+
+  fill.style.transition = "width 1.2s linear";
+  fill.style.width = "100%";
+  text.innerText = "Confirming...";
+
+  // 3. Set the trigger timer
+  shopHoldTimer = setTimeout(() => {
+    executePurchaseSequence(rewardId, cost, btnEl, card);
+  }, 1200);
+}
+
+function cancelHoldToRedeem(btnEl) {
+  if (shopHoldTimer) clearTimeout(shopHoldTimer);
+
+  const fill = btnEl.querySelector(".btn-fill");
+  const text = btnEl.querySelector(".btn-text");
+
+  // Only reverse the animation if they haven't already succeeded
+  if (fill && !btnEl.disabled) {
+    fill.style.transition = "width 0.2s ease-out";
+    fill.style.width = "0%";
+
+    // Reset text only if they aren't broke
+    const currentPoints = Points.currentBalance || 0;
+    const costText = btnEl.closest(".shop-item").querySelector("p").innerText;
+    const costNum = parseInt(costText.replace(/,/g, ""));
+    if (currentPoints >= costNum) text.innerText = "Hold to Redeem";
+  }
+}
+
+// --- 🎉 THE SECURE CHECKOUT & LOOT DROP ---
+async function executePurchaseSequence(rewardId, cost, btnEl, cardEl) {
+  // 1. Hard Lock the button so they can't double-fire
+  btnEl.disabled = true;
+  const text = btnEl.querySelector(".btn-text");
+  text.innerText = "Processing...";
+
+  try {
+    await Graph.createRewardOrder(State.currentUser.email, rewardId, cost);
+    //await new Promise((r) => setTimeout(r, 600)); // Simulating network
+
+    // 2. Process Point Deduction
+    Points.currentBalance -= cost;
+    if (typeof Points !== "undefined" && Points.updateHUD) {
+      Points.updateHUD();
+      const elBalance = document.getElementById("hud-balance");
+      if (elBalance) {
+        elBalance.style.color = "#E11D48";
+        setTimeout(() => (elBalance.style.color = ""), 1000);
+      }
+    }
+
+    // 3. 🎁 THE LOOT DROP VISUALS
+    cardEl.classList.add("loot-pop");
+    btnEl.style.background = "#10B981"; // Snap to solid green
+    text.innerText = "✅ Unlocked!";
+
+    // Fire the massive particle burst from the existing engine!
+    if (Points.flyParticlesToHUD) Points.flyParticlesToHUD(25, 0);
+
+    // Refresh the whole shop after letting them enjoy the animation for 2 seconds
+    setTimeout(() => renderShop(), 2200);
+  } catch (err) {
+    console.error("Reward error:", err);
+    UI.showToast("Failed to process reward.", "error");
+    btnEl.disabled = false;
+    text.innerText = "Hold to Redeem";
+    btnEl.querySelector(".btn-fill").style.width = "0%";
+  }
+}
+
+function renderComingSoon() {
+  const mainContent = document.getElementById("main-content");
+  mainContent.innerHTML = "";
+
+  const template = document.getElementById("tmpl-coming-soon-page");
+
+  if (template) {
+    const clone = template.content.cloneNode(true);
+    mainContent.appendChild(clone);
+
+    // ==========================================
+    // 1. The Global Flashlight Tracking
+    // ==========================================
+    const wrapper = document.getElementById("coming-soon-wrap");
+    if (wrapper) {
+      wrapper.addEventListener("mousemove", (e) => {
+        // Track mouse position directly relative to the wrapper bounds
+        const rect = wrapper.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // Update the CSS variables driving the radial mask
+        wrapper.style.setProperty("--cursor-x", `${x}px`);
+        wrapper.style.setProperty("--cursor-y", `${y}px`);
+      });
+    }
+
+    // ==========================================
+    // 2. The 3D Hover & Shockwave Click
+    // ==========================================
+    const card = document.querySelector(".vault-card");
+    if (card) {
+      // 3D Tilt
+      card.addEventListener("mousemove", (e) => {
+        if (card.classList.contains("is-shocked")) return; // Freeze tilt while shaking
+        const rect = card.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const centerX = rect.width / 2;
+        const centerY = rect.height / 2;
+
+        const rotateX = ((y - centerY) / centerY) * -4;
+        const rotateY = ((x - centerX) / centerX) * 4;
+
+        card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.01, 1.01, 1.01)`;
+        card.style.transition = "none";
+      });
+
+      card.addEventListener("mouseleave", () => {
+        if (card.classList.contains("is-shocked")) return;
+        card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
+        card.style.transition = "transform 0.6s ease-out";
+      });
+
+      // The "Access Denied" Event
+      card.addEventListener("click", () => {
+        // Prevent spam clicking
+        if (card.classList.contains("is-shocked")) return;
+
+        card.classList.add("is-shocked");
+        const stamp = document.getElementById("denied-stamp");
+        const flash = document.getElementById("alarm-flash");
+
+        if (stamp) stamp.classList.add("is-stamped");
+        if (flash) flash.classList.add("is-flashing");
+
+        // Reset the alarms after 2 seconds
+        setTimeout(() => {
+          card.classList.remove("is-shocked");
+          if (stamp) stamp.classList.remove("is-stamped");
+          if (flash) flash.classList.remove("is-flashing");
+        }, 2000);
+      });
+    }
+
+    // ==========================================
+    // 3. The Cyber-Decrypt Hover Hack
+    // ==========================================
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$+<>;";
+    const glitchText = document.querySelector(".glitch-text");
+
+    if (glitchText) {
+      glitchText.addEventListener("mouseover", (event) => {
+        let iterations = 0;
+        clearInterval(glitchText.interval);
+
+        glitchText.interval = setInterval(() => {
+          event.target.innerText = event.target.innerText
+            .split("")
+            .map((letter, index) => {
+              if (index < iterations) return event.target.dataset.value[index];
+              return letters[Math.floor(Math.random() * letters.length)];
+            })
+            .join("");
+
+          if (iterations >= event.target.dataset.value.length) {
+            clearInterval(glitchText.interval);
+          }
+          iterations += 1 / 3;
+        }, 30);
+      });
+    }
+
+    // ==========================================
+    // 4. The Terminal Status Cycler
+    // ==========================================
+    const statusPhrases = [
+      "Status: Decrypting Protocol...",
+      "Status: Routing XP Matrix...",
+      "Status: Bypassing Security Handshake...",
+      "Status: Synchronizing Combo Streaks...",
+      "Status: Verifying Agent Clearance...",
+      "Status: Establishing Secure Uplink...",
+      "Status: Compiling Reward Nodes...",
+      "Status: Overriding Mainframe Limits...",
+    ];
+
+    const statusText = document.getElementById("vault-status-text");
+    if (statusText) {
+      let phraseIndex = 0;
+      if (window._vaultInterval) clearInterval(window._vaultInterval);
+
+      window._vaultInterval = setInterval(() => {
+        phraseIndex = (phraseIndex + 1) % statusPhrases.length;
+        statusText.innerText = statusPhrases[phraseIndex];
+      }, 2400);
+    }
+  } else {
+    console.error("Coming soon template is missing from index.html!");
+  }
+}
 // ============================================================
 //  LEAD MODAL (Admin — Add/Edit)
 // ============================================================
@@ -6276,17 +6833,73 @@ function setLoading(on) {
 }
 
 function updateBadges() {
-  const n = State.leads.filter(function (l) {
+  // --- 1. ESTABLISH CURRENT USER IDENTITY ---
+  const user = State.currentUser;
+  const userName = ((user && user.name) || "").toLowerCase().trim();
+  const userEmail = ((user && user.email) || "").toLowerCase().trim();
+
+  const contractor = State.contractors.find((c) => {
+    return (
+      (c.email || "").toLowerCase().trim() === userEmail ||
+      (c.name || "").toLowerCase().trim() === userName
+    );
+  });
+  const agentName = contractor
+    ? contractor.name.toLowerCase().trim()
+    : userName;
+
+  // Helper to match the robust regex spacing you use in myLeads
+  const cleanStr = (str) => str.replace(/\s+/g, " ");
+  const matchAgentName = cleanStr(agentName);
+  const matchUserName = cleanStr(userName);
+  const matchUserEmail = cleanStr(userEmail);
+
+  // Helper to check if a lead belongs to the current user
+  function isMyLead(l) {
+    const assigned = (l.assignedTo || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+    return (
+      assigned &&
+      (assigned === matchAgentName ||
+        assigned === matchUserName ||
+        assigned === matchUserEmail)
+    );
+  }
+
+  // --- 2. LEADS BADGE LOGIC ---
+  const leadsCount = State.leads.filter(function (l) {
+    if (!isMyLead(l)) return false;
+
     return (
       l.flags &&
       (l.flags.includes("needs_recycle") ||
         l.flags.includes("agent_overloaded"))
     );
   }).length;
-  const b = document.getElementById("badge-leads");
-  if (b) {
-    b.textContent = n > 0 ? n : "";
-    b.style.display = n > 0 ? "inline-flex" : "none";
+
+  const leadsBadge = document.getElementById("badge-leads");
+  if (leadsBadge) {
+    leadsBadge.textContent = leadsCount > 0 ? leadsCount : "";
+    leadsBadge.style.display = leadsCount > 0 ? "inline-flex" : "none";
+  }
+
+  // --- 3. CALLBACKS BADGE LOGIC ---
+  const now = new Date();
+  const cbCount = State.leads.filter(function (l) {
+    if (!isMyLead(l)) return false;
+
+    if (!l.callbackAt) return false;
+    const cbDate = new Date(l.callbackAt);
+
+    return cbDate <= now;
+  }).length;
+
+  const cbBadge = document.getElementById("badge-callbacks");
+  if (cbBadge) {
+    cbBadge.textContent = cbCount > 0 ? cbCount : "";
+    cbBadge.style.display = cbCount > 0 ? "inline-flex" : "none";
   }
 }
 
@@ -6562,65 +7175,94 @@ const Ticker = {
     const tickerEl = document.getElementById("sales-ticker-content");
     if (!tickerEl) return;
 
-    // Grab today's date string (e.g., "Fri Apr 10 2026")
-    const todayStr = new Date().toDateString();
+    // 1. USE THE DASHBOARD'S EXACT DATA SOURCE
+    const soldToday = State.todaySales ? [...State.todaySales] : [];
 
-    // 1. Find all leads sold TODAY
-    const soldToday = State.leads.filter((l) => {
-      const isSold = l.status && l.status.toLowerCase().includes("sold");
-      // Check if the lead was last updated today
-      const isFromToday =
-        l.lastContacted &&
-        new Date(l.lastContacted).toDateString() === todayStr;
+    // Sort by exact timestamp so the newest is always mathematically first
+    soldToday.sort(
+      (a, b) => new Date(b.lastContacted) - new Date(a.lastContacted),
+    );
 
-      return isSold && isFromToday;
-    });
-
-    // 2. Calculate Top 5 Agents (Today Only)
+    // 2. Calculate Top 5 Agents
     const agentSales = {};
     soldToday.forEach((l) => {
-      const seller = l.soldBy || l.assignedTo;
+      const seller = l.assignedTo;
       if (seller) {
-        agentSales[seller] = (agentSales[seller] || 0) + 1;
+        // 🚀 UPGRADE: Ensure the leaderboard gets perfectly clean names
+        const displayName = AgentDirectory.getName(seller);
+        agentSales[displayName] = (agentSales[displayName] || 0) + 1;
       }
     });
 
     const topAgents = Object.entries(agentSales)
-      .sort((a, b) => b[1] - a[1]) // Sort highest to lowest
-      .slice(0, 5) // Grab top 5
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
       .map(
         (entry, i) =>
-          `<strong>#${i + 1} ${escHtml(entry[0])}</strong> (${entry[1]})`,
+          `<span class="ticker-badge leader">#${i + 1} <strong>${escHtml(entry[0])}</strong> <span class="count">${entry[1]}</span></span>`,
       );
 
-    // 3. Grab the 5 most recent sales (Today Only)
-    const recentSales = soldToday
-      .slice(-5)
-      .reverse()
-      .map((l) => {
-        const soldBy = l.soldBy || l.assignedTo || "Someone";
-        const forAgent = l.assignedTo;
+    // 🎲 THE RNG ARRAYS
+    const emojis = ["🤑", "💰", "💸", "💵", "📈"];
+    const directPhrases = [
+      "closed",
+      "secured a deal",
+      "locked in a sale",
+      "just closed",
+      "bagged a deal",
+      "made it happen",
+    ];
+    const splitPhrases = [
+      "split for",
+      "shared a win with",
+      "tag-teamed a close for",
+      "assisted a close for",
+    ];
 
-        if (forAgent && soldBy !== forAgent) {
-          return `🎉 <strong>${escHtml(soldBy)}</strong> just made a sale for <strong>${escHtml(forAgent)}</strong> — ${escHtml(l.name)}`;
-        } else {
-          return `🎉 <strong>${escHtml(soldBy)}</strong> just closed a sale! — ${escHtml(l.name)}`;
-        }
-      });
+    // 3. Grab the 5 most recent sales
+    const recentSales = soldToday.slice(0, 5).map((l) => {
+      const soldBy = l.soldBy || l.assignedTo || "Someone";
+      const forAgent = l.assignedTo;
 
-    // 4. Build the string with new "TODAY" labels
-    let textParts = [];
+      // 🚀 UPGRADE: Use the new directory to format both names perfectly
+      const cleanSoldBy = AgentDirectory.getName(soldBy);
+      const cleanForAgent = AgentDirectory.getName(forAgent);
+
+      // Pick a random emoji for this specific iteration
+      const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+
+      if (forAgent && soldBy !== forAgent) {
+        const randomSplit =
+          splitPhrases[Math.floor(Math.random() * splitPhrases.length)];
+        return `<span class="ticker-badge sale">${randomEmoji} <strong>${escHtml(cleanSoldBy)}</strong> ${randomSplit} <strong>${escHtml(cleanForAgent)}</strong>: ${escHtml(l.name)}</span>`;
+      } else {
+        const randomDirect =
+          directPhrases[Math.floor(Math.random() * directPhrases.length)];
+        return `<span class="ticker-badge sale">${randomEmoji} <strong>${escHtml(cleanSoldBy)}</strong> ${randomDirect}: ${escHtml(l.name)}</span>`;
+      }
+    });
+
+    // 4. Build the HTML string
+    let content = "";
+
     if (recentSales.length > 0) {
-      textParts.push(`🔥 TODAY'S RECENT: ${recentSales.join("  •  ")}`);
-    }
-    if (topAgents.length > 0) {
-      textParts.push(`🏆 TODAY'S LEADERS: ${topAgents.join("  •  ")}`);
+      content += `<span class="ticker-section"><span class="ticker-label"><span class="live-dot-ticker"></span>LATEST ACTIVITY:</span> ${recentSales.join("")}</span>`;
     }
 
-    // 5. Inject it
+    if (topAgents.length > 0) {
+      content += `<span class="ticker-section"><span class="ticker-label">🏆 TODAY'S TOP:</span> ${topAgents.join("")}</span>`;
+    }
+
+    // 5. Inject the data
     tickerEl.innerHTML =
-      textParts.length > 0
-        ? textParts.join("  |  ")
-        : "🚀 Let's make some sales today!";
+      content ||
+      `<span class="ticker-badge empty">🚀 Pipeline is waiting. Let's make some sales today!</span>`;
+
+    // 🚀 NEW: Tell the ticker to drop down into view NOW!
+    setTimeout(() => {
+      if (tickerEl.parentElement) {
+        tickerEl.parentElement.classList.remove("booting");
+      }
+    }, 50);
   },
 };

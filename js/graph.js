@@ -1152,6 +1152,43 @@ const Graph = (() => {
     return uniqueLeads.size;
   }
 
+  // ============================================================
+  //  REWARD SHOP (TREMENDOUS API MIDDLEMAN)
+  // ============================================================
+
+  async function createRewardOrder(agentEmail, rewardId, cost) {
+    if (!agentEmail || !rewardId || !cost) {
+      throw new Error("Missing required data to process reward.");
+    }
+
+    await resolveSiteIds();
+
+    // Using the leadship site assuming you want to keep this list secure/hidden from the general team site
+    const url =
+      base +
+      "/sites/" +
+      siteIds.leadship +
+      "/lists/" +
+      Config.sharePoint.lists.rewardOrdersList + // 🚀 We will need to add this to Config!
+      "/items";
+
+    const payload = {
+      fields: {
+        Title: rewardId, // e.g., "visa_25"
+        AgentEmail: agentEmail,
+        Status: "Pending", // Power Automate will watch for "Pending"
+      },
+    };
+
+    // Use your robust wrapper
+    const res = await apiFetch(url, {
+      method: "POST",
+      body: payload,
+    });
+
+    return res;
+  }
+
   return {
     apiFetch,
     getLeads,
@@ -1177,5 +1214,6 @@ const Graph = (() => {
     checkLedgerForDuplicate,
     writeLedgerTransaction,
     updateAgentScore,
+    createRewardOrder,
   };
 })();
