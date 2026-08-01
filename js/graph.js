@@ -168,18 +168,39 @@ const Graph = (() => {
   //  LEADS
   // ============================================================
 
+  // ============================================================
+  //  LEADS (WITH 30-DAY CHECK & EXACT SHAREPOINT LIST COUNTING)
+  // ============================================================
+
   async function getLeads(lastSyncDate = null, existingLeads = []) {
     await resolveSiteIds();
 
-    // 🚀 STEP 1: If RAM is empty (F5 refresh), load from IndexedDB instantly
+    // 🚀 STEP 1: Load from IndexedDB
     if (!existingLeads || existingLeads.length === 0) {
       existingLeads = await LocalDB.getAllItems("leads");
-
-      // Apply your business rules to the cached data immediately
-      existingLeads = existingLeads.filter(
-        (lead) => lead.status !== "D2D Lead" && lead.status !== "TDM Non-Reg",
+      console.log(
+        `📦 [Graph.getLeads] Loaded ${existingLeads.length} leads from IndexedDB.`,
       );
     }
+
+    // 🚀 STEP 2: CHECK FOR 30+ DAY STALE CACHE OR FIRST LOGIN
+    let isStaleCache = false;
+    if (lastSyncDate && typeof lastSyncDate === "string") {
+      const daysSinceSync =
+        (Date.now() - new Date(lastSyncDate).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceSync > 30) {
+        isStaleCache = true;
+        console.warn(
+          `⏳ [Graph.getLeads] Cache is ${Math.round(daysSinceSync)} days old (>30 days). Forcing Cold Boot.`,
+        );
+      }
+    } else {
+      isStaleCache = true; // No timestamp = First login ever
+    }
+
+    // 🚀 STEP 3: GUARANTEED COLD BOOT TRIGGER
+    // Fires if RAM/DB has fewer than 1,000 leads OR user hasn't synced in >30 days
+    const isColdBoot = existingLeads.length < 1000 || isStaleCache;
 
     const expandQuery = "expand=fields";
     let url =
@@ -190,52 +211,180 @@ const Graph = (() => {
       lists.leadsList +
       `/items?${expandQuery}&$select=id,lastModifiedDateTime,createdDateTime&$top=5000`;
 
-    // 🚀 STEP 2: The Delta Filter (Modified vs Created)
-    if (lastSyncDate && typeof lastSyncDate === "string") {
+    // Only apply delta filter if we are NOT cold booting
+    if (!isColdBoot && lastSyncDate && typeof lastSyncDate === "string") {
       const safeDate = lastSyncDate.split(".")[0] + "Z";
       url += `&$filter=fields/Modified gt '${safeDate}'`;
     }
 
-    const raw = await getAllItems(url);
-
-    // If no new/modified leads, just return what we already have
-    if (raw.length === 0) {
-      return existingLeads;
+    // 🚀 STEP 4: Fetch with Streamed Progress Modal if Cold Booting
+    let raw = [];
+    if (isColdBoot) {
+      raw = await getAllItemsStreamed("leads", url);
+    } else {
+      raw = await getAllItems(url);
     }
 
-    // 🚀 STEP 3: Normalize the new/updated leads
+    if (raw.length === 0) {
+      return existingLeads.filter(
+        (l) =>
+          l.status !== "D2D Lead" &&
+          l.status !== "TDM Non-Reg" &&
+          l.status !== "Deleted",
+      );
+    }
+
     const updatedBatch = raw.map(normalizeLeadItem);
 
-    // 🚀 STEP 4: Save to IndexedDB (Upsert)
-    // IndexedDB will automatically overwrite old versions of these leads
-    // because they share the same 'id' primary key.
-    await LocalDB.saveItems("leads", updatedBatch);
+    // Save to IndexedDB if we didn't already stream it page-by-page
+    if (!isColdBoot) {
+      await LocalDB.saveItems("leads", updatedBatch);
+    }
 
-    // 🚀 STEP 5: Smart Merge for the UI
-    // We turn the existing list into a Map for O(1) lookups
     const leadMap = new Map();
     existingLeads.forEach((l) => leadMap.set(l.id, l));
-
-    // Add or Replace with the updated data
     updatedBatch.forEach((l) => leadMap.set(l.id, l));
 
-    // Convert back to array and re-apply filters (in case a status changed to D2D)
     const finalizedLeads = Array.from(leadMap.values()).filter(
-      (lead) => lead.status !== "D2D Lead" && lead.status !== "TDM Non-Reg",
+      (l) =>
+        l.status !== "D2D Lead" &&
+        l.status !== "TDM Non-Reg" &&
+        l.status !== "Deleted",
     );
 
-    // 🚀 STEP 6: Update the Leads Sync Date
     const validTimestamps = updatedBatch
       .map((l) => new Date(l.modified || l.lastModifiedDateTime).getTime())
       .filter((t) => !isNaN(t));
 
     if (validTimestamps.length > 0) {
       const maxTime = Math.max(...validTimestamps);
-      const newSyncDate = new Date(maxTime).toISOString();
-      localStorage.setItem("RaimakLeadsLastSyncDate", newSyncDate);
+      // 🛡️ FRONTIER STORAGE KEY: Protected from VZ key collisions
+      localStorage.setItem(
+        "RaimakLeadsLastSyncDate",
+        new Date(maxTime).toISOString(),
+      );
     }
 
     return finalizedLeads;
+  }
+
+  async function getAllItemsStreamed(storeName, initialUrl) {
+    const items = [];
+    let next = initialUrl;
+    let pageCount = 0;
+
+    // 🚀 1. QUERY SHAREPOINT LIST METADATA FOR EXACT ITEM COUNT (NO ESTIMATES!)
+    let exactTotal = 30000; // Fallback default
+    try {
+      const metaUrl = `${base}/sites/${siteIds.team}/lists/${lists.leadsList}?$select=id,list`;
+      const metaRes = await apiFetch(metaUrl, { method: "GET" });
+      if (
+        metaRes &&
+        metaRes.list &&
+        typeof metaRes.list.itemCount === "number"
+      ) {
+        exactTotal = metaRes.list.itemCount;
+        console.log(
+          `🎯 [Graph.getAllItemsStreamed] Exact SharePoint list size: ${exactTotal.toLocaleString()}`,
+        );
+      }
+    } catch (metaErr) {
+      console.warn(
+        "⚠️ Could not fetch exact list itemCount; falling back to 30,000 estimate.",
+        metaErr,
+      );
+    }
+
+    // 🚀 2. FIND OR BUILD THE MODAL WITH MAX Z-INDEX (FRONTIER CYAN/BLUE THEME)
+    let modal = document.getElementById("cold-boot-overlay");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "cold-boot-overlay";
+      modal.style.cssText =
+        "position: fixed; inset: 0; background: rgba(4, 8, 17, 0.94); backdrop-filter: blur(10px); z-index: 2147483647; display: flex; align-items: center; justify-content: center; padding: 20px;";
+      modal.innerHTML = `
+        <div class="card" style="max-width: 440px; width: 100%; padding: 32px; text-align: center; border: 1px solid rgba(0, 212, 255, 0.3); background: rgba(13, 27, 62, 0.85); box-shadow: 0 0 50px rgba(0, 212, 255, 0.2); border-radius: 16px;">
+          <div style="font-size: 48px; margin-bottom: 16px;">⚡</div>
+          <h2 style="font-family: var(--font-head, sans-serif); font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; color: #ffffff;">
+            Caching Frontier Floor Data
+          </h2>
+          <p style="color: #94a3b8; font-size: 13px; margin-bottom: 24px; line-height: 1.5;">
+            Downloading active leads to your device for instant offline search and zero-lag dialing. This only runs on first login or after 30 days away.
+          </p>
+          <div style="width: 100%; background: rgba(0, 0, 0, 0.6); height: 10px; border-radius: 5px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 12px;">
+            <div id="cold-boot-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #2563b0, #00d4ff); transition: width 0.3s ease; box-shadow: 0 0 12px rgba(0, 212, 255, 0.8);"></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px; color: #94a3b8;">
+            <span id="cold-boot-status">Connecting to Microsoft Graph...</span>
+            <span id="cold-boot-percent" style="color: #00ff88; font-weight: 700;">0%</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // 🚀 3. HOISTING FIX: Always append to document.body
+    document.body.appendChild(modal);
+    modal.style.display = "flex";
+
+    const fill = document.getElementById("cold-boot-fill");
+    const statusText = document.getElementById("cold-boot-status");
+    const percentText = document.getElementById("cold-boot-percent");
+
+    try {
+      while (next) {
+        pageCount++;
+        if (statusText)
+          statusText.textContent = `Downloading floor batch #${pageCount}...`;
+
+        const data = await apiFetch(next, {
+          method: "GET",
+          maxRetries: 7,
+          headers: { Prefer: "allow-throttleable-queries" },
+        });
+
+        if (data && data.value) {
+          items.push(...data.value);
+
+          // Stream page directly into IndexedDB
+          const normalizedChunk = data.value.map(normalizeLeadItem);
+          await LocalDB.saveItems(storeName, normalizedChunk);
+
+          // 🚀 4. CALCULATE PROGRESS USING EXACT SHAREPOINT LIST SIZE
+          const currentPct = Math.min(
+            99,
+            Math.round((items.length / exactTotal) * 100),
+          );
+          if (fill) fill.style.width = `${currentPct}%`;
+          if (percentText) percentText.textContent = `${currentPct}%`;
+          if (statusText)
+            statusText.textContent = `Cached ${items.length.toLocaleString()} of ${exactTotal.toLocaleString()} leads...`;
+        }
+
+        next = data["@odata.nextLink"] || null;
+
+        // ⏱️ Polite 350ms TCPA/Graph pacing between pages
+        if (next) {
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        }
+      }
+
+      if (fill) fill.style.width = "100%";
+      if (percentText) percentText.textContent = "100%";
+      if (statusText) statusText.textContent = "Floor cache ready!";
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    } catch (error) {
+      console.error("❌ Cold boot streaming failed:", error);
+      if (window.UI && UI.showToast) {
+        UI.showToast(
+          "Sync interrupted. Partially cached floor data.",
+          "warning",
+        );
+      }
+    } finally {
+      if (modal) modal.style.display = "none";
+    }
+
+    return items;
   }
 
   async function getNextLeadForAgent(agentEmail) {
@@ -446,7 +595,7 @@ const Graph = (() => {
       lists.contractorList +
       "/items?expand=fields&$top=500";
     const raw = await getAllItems(url);
-    return raw.map((item) => {
+    const contractors = raw.map((item) => {
       const f = item.fields || {};
       return {
         id: item.id,
@@ -457,6 +606,11 @@ const Graph = (() => {
         active: f.Active !== undefined ? f.Active : true,
       };
     });
+
+    // 🚀 THE FIX: Always return contractors sorted A–Z by display name!
+    return contractors.sort((a, b) =>
+      (a.name || "").localeCompare(b.name || ""),
+    );
   }
 
   async function getAgentScores() {
@@ -617,6 +771,10 @@ const Graph = (() => {
   // ============================================================
   //  ACTIVITY LOG
   // ============================================================
+  // ============================================================
+  //  ACTIVITY LOG (WITH COLD-BOOT STREAMING ENGINE)
+  // ============================================================
+
   async function getActivityLog(
     lastSyncDate = null,
     existingLogs = [],
@@ -624,27 +782,37 @@ const Graph = (() => {
   ) {
     await resolveSiteIds();
 
-    // 🚀 STEP 1: If RAM is empty (F5 refresh), try to load from the Local Database first
+    // 🚀 STEP 1: Load from IndexedDB
     if (!existingLogs || existingLogs.length === 0) {
       existingLogs = await LocalDB.getAllItems("activity_logs");
-
-      // Sort them newest first so the UI stays consistent
       existingLogs.sort(
         (a, b) => new Date(b.timestamp) - new Date(a.timestamp),
       );
-
       if (existingLogs.length > 0) {
-        UI.showToast(
-          `🚀 Loaded ${existingLogs.length} logs from local cache.`,
-          "success",
+        console.log(
+          `📦 [Graph.getActivityLog] Loaded ${existingLogs.length} logs from IndexedDB.`,
         );
       }
     }
 
-    // 🚀 STEP 2: Decide if we actually need to download anything
-    // If RAM was empty and the Database was empty, we do a full sync (null)
-    // Otherwise, we use the saved lastSyncDate to get the delta
-    let effectiveSyncDate = existingLogs.length === 0 ? null : lastSyncDate;
+    // 🚀 STEP 2: CHECK FOR 30+ DAY STALE CACHE OR FIRST LOGIN
+    let isStaleCache = false;
+    if (lastSyncDate && typeof lastSyncDate === "string") {
+      const daysSinceSync =
+        (Date.now() - new Date(lastSyncDate).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceSync > 30) {
+        isStaleCache = true;
+        console.warn(
+          `⏳ [Graph.getActivityLog] Activity cache is ${Math.round(daysSinceSync)} days old (>30 days). Forcing Cold Boot.`,
+        );
+      }
+    } else {
+      isStaleCache = true; // No timestamp = First login ever
+    }
+
+    // 🚀 STEP 3: GUARANTEED COLD BOOT TRIGGER
+    // Fires if IndexedDB has fewer than 1,000 entries OR user hasn't synced in >30 days
+    const isColdBoot = existingLogs.length < 1000 || isStaleCache;
 
     const selectedFields =
       "LeadID,LeadId,Title,LeadName,ActionType,Action,Activity,AgentEmail,Agent,Notes,Created";
@@ -656,25 +824,31 @@ const Graph = (() => {
       lists.activityLog +
       `/items?expand=fields($select=${selectedFields})&$select=id,createdDateTime&$top=5000`;
 
-    if (effectiveSyncDate) {
-      // The millisecond-scrubbing fix for Microsoft Graph
-      const safeDate = effectiveSyncDate.split(".")[0] + "Z";
+    // Only apply delta filter if we are NOT cold booting
+    if (!isColdBoot && lastSyncDate && typeof lastSyncDate === "string") {
+      const safeDate = lastSyncDate.split(".")[0] + "Z";
       url += `&$filter=fields/Created gt '${safeDate}'`;
     }
 
-    const raw = await getAllItems(url);
+    // 🚀 STEP 4: Fetch with Streamed Progress Modal if Cold Booting
+    let raw = [];
+    if (isColdBoot) {
+      raw = await getActivityLogStreamed("activity_logs", url);
+    } else {
+      raw = await getAllItems(url);
+    }
 
-    // If no new items exist, we're done! Return what we have.
+    // If no new items exist, we're done!
     if (raw.length === 0) {
       if (isDeltaRefresh) UI.showToast("✅ Logs are up to date.", "success");
       return { updatedLogs: existingLogs, newSyncDate: lastSyncDate };
     }
 
-    // 🚀 STEP 3: Map the new items from Microsoft
+    // 🚀 STEP 5: Normalize the new logs
     const newLogs = raw.map((item) => {
       const f = item.fields || {};
       return {
-        id: item.id, // Primary Key for IndexedDB
+        id: item.id,
         leadId: String(f.LeadID || f.LeadId || ""),
         leadName: f.Title || f.LeadName || "",
         action: f.ActionType || f.Action || f.Activity || "",
@@ -685,15 +859,15 @@ const Graph = (() => {
       };
     });
 
-    // 🚀 STEP 4: Save the new items to IndexedDB permanently!
-    // This happens in the background so the UI doesn't lag.
-    await LocalDB.saveItems("activity_logs", newLogs);
+    // Save to IndexedDB if we didn't already stream it page-by-page
+    if (!isColdBoot) {
+      await LocalDB.saveItems("activity_logs", newLogs);
+    }
 
-    // 🚀 STEP 5: Merge and Sort
-    // New items go to the front, followed by the existing local logs
+    // 🚀 STEP 6: Merge and Sort (Newest first)
     const finalizedLogs = [...newLogs.reverse(), ...existingLogs];
 
-    // 🚀 STEP 6: Update the Sync Date (High-Water Mark)
+    // 🚀 STEP 7: Update the Sync Date (High-Water Mark)
     const validTimestamps = newLogs
       .map((log) => new Date(log.timestamp).getTime())
       .filter((time) => !isNaN(time));
@@ -705,7 +879,7 @@ const Graph = (() => {
       localStorage.setItem("RaimakActivityLastSyncDate", newLastSyncDate);
     }
 
-    if (effectiveSyncDate && isDeltaRefresh) {
+    if (lastSyncDate && isDeltaRefresh) {
       UI.showToast(`✅ Synced ${newLogs.length} new logs.`, "success");
     }
 
@@ -713,6 +887,151 @@ const Graph = (() => {
       updatedLogs: finalizedLogs,
       newSyncDate: newLastSyncDate,
     };
+  }
+
+  async function getActivityLogStreamed(storeName, initialUrl) {
+    const items = [];
+    let next = initialUrl;
+    let pageCount = 0;
+
+    // 🚀 1. QUERY SHAREPOINT METADATA FOR EXACT ITEM COUNT
+    // Using siteIds.leadship since activityLog lives on the leadship site!
+    let exactTotal = 50000; // Fallback default
+    try {
+      const metaUrl = `${base}/sites/${siteIds.leadship}/lists/${lists.activityLog}?$select=id,list`;
+      const metaRes = await apiFetch(metaUrl, { method: "GET" });
+      if (
+        metaRes &&
+        metaRes.list &&
+        typeof metaRes.list.itemCount === "number"
+      ) {
+        exactTotal = metaRes.list.itemCount;
+        console.log(
+          `🎯 [Graph.getActivityLogStreamed] Exact Activity Log size: ${exactTotal.toLocaleString()}`,
+        );
+      }
+    } catch (metaErr) {
+      console.warn(
+        "⚠️ Could not fetch exact activity itemCount; falling back to 50,000 estimate.",
+        metaErr,
+      );
+    }
+
+    // 🚀 2. FIND OR BUILD THE MODAL WITH MAX Z-INDEX
+    let modal = document.getElementById("cold-boot-overlay");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "cold-boot-overlay";
+      modal.style.cssText =
+        "position: fixed; inset: 0; background: rgba(4, 8, 17, 0.94); backdrop-filter: blur(10px); z-index: 2147483647; display: flex; align-items: center; justify-content: center; padding: 20px;";
+      modal.innerHTML = `
+        <div class="card" style="max-width: 440px; width: 100%; padding: 32px; text-align: center; border: 1px solid rgba(0, 212, 255, 0.3); background: rgba(13, 27, 62, 0.85); box-shadow: 0 0 50px rgba(0, 212, 255, 0.2); border-radius: 16px;">
+          <div style="font-size: 48px; margin-bottom: 16px;">⚡</div>
+          <h2 id="cold-boot-title" style="font-family: var(--font-head, sans-serif); font-size: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; color: #ffffff;">
+            Caching Activity History
+          </h2>
+          <p id="cold-boot-desc" style="color: #94a3b8; font-size: 13px; margin-bottom: 24px; line-height: 1.5;">
+            Downloading floor activity history to your device for instant offline reporting and leaderboard tracking.
+          </p>
+          <div style="width: 100%; background: rgba(0, 0, 0, 0.6); height: 10px; border-radius: 5px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); margin-bottom: 12px;">
+            <div id="cold-boot-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #2563b0, #00d4ff); transition: width 0.3s ease; box-shadow: 0 0 12px rgba(0, 212, 255, 0.8);"></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px; color: #94a3b8;">
+            <span id="cold-boot-status">Connecting to Microsoft Graph...</span>
+            <span id="cold-boot-percent" style="color: #00ff88; font-weight: 700;">0%</span>
+          </div>
+        </div>
+      `;
+    } else {
+      // If modal was already open from getLeads(), update the text seamlessly!
+      const titleEl = modal.querySelector("h2");
+      const descEl = modal.querySelector("p");
+      if (titleEl) titleEl.textContent = "CACHING ACTIVITY HISTORY";
+      if (descEl)
+        descEl.textContent =
+          "Downloading floor activity history to your device for instant offline reporting and leaderboard tracking.";
+    }
+
+    // Always re-append to document.body to ensure top-level z-index stacking
+    document.body.appendChild(modal);
+    modal.style.display = "flex";
+
+    const fill = document.getElementById("cold-boot-fill");
+    const statusText = document.getElementById("cold-boot-status");
+    const percentText = document.getElementById("cold-boot-percent");
+
+    // Reset progress bar to 0% for the activity phase
+    if (fill) fill.style.width = "0%";
+    if (percentText) percentText.textContent = "0%";
+
+    try {
+      while (next) {
+        pageCount++;
+        if (statusText)
+          statusText.textContent = `Downloading activity batch #${pageCount}...`;
+
+        const data = await apiFetch(next, {
+          method: "GET",
+          maxRetries: 7,
+          headers: { Prefer: "allow-throttleable-queries" },
+        });
+
+        if (data && data.value) {
+          items.push(...data.value);
+
+          // Stream page directly into IndexedDB immediately
+          const normalizedChunk = data.value.map((item) => {
+            const f = item.fields || {};
+            return {
+              id: item.id,
+              leadId: String(f.LeadID || f.LeadId || ""),
+              leadName: f.Title || f.LeadName || "",
+              action: f.ActionType || f.Action || f.Activity || "",
+              agent: f.AgentEmail || f.Agent || "",
+              agentEmail: f.AgentEmail || "",
+              notes: f.Notes || "",
+              timestamp: item.createdDateTime || f.Created || null,
+            };
+          });
+
+          await LocalDB.saveItems(storeName, normalizedChunk);
+
+          // Calculate exact progress against metadata count
+          const currentPct = Math.min(
+            99,
+            Math.round((items.length / exactTotal) * 100),
+          );
+          if (fill) fill.style.width = `${currentPct}%`;
+          if (percentText) percentText.textContent = `${currentPct}%`;
+          if (statusText)
+            statusText.textContent = `Cached ${items.length.toLocaleString()} of ${exactTotal.toLocaleString()} logs...`;
+        }
+
+        next = data["@odata.nextLink"] || null;
+
+        // ⏱️ Polite 350ms pacing between pages to avoid HTTP 429 throttling
+        if (next) {
+          await new Promise((resolve) => setTimeout(resolve, 350));
+        }
+      }
+
+      if (fill) fill.style.width = "100%";
+      if (percentText) percentText.textContent = "100%";
+      if (statusText) statusText.textContent = "Activity cache ready!";
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    } catch (error) {
+      console.error("❌ Activity log cold boot streaming failed:", error);
+      if (window.UI && UI.showToast) {
+        UI.showToast(
+          "Sync interrupted. Partially cached activity logs.",
+          "warning",
+        );
+      }
+    } finally {
+      if (modal) modal.style.display = "none";
+    }
+
+    return items;
   }
 
   async function getActivityLogForToday() {

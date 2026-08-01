@@ -467,50 +467,50 @@ async function loadAllData() {
       }),
     ]);
 
-    State.contractors = contractors;
-    State.leads = Graph.applyBusinessRules(rawLeads, contractors);
+    // 🚀 A-Z ROSTER SAFEGUARD: Always sort contractors alphabetically by display name
+    State.contractors = (contractors || []).sort((a, b) =>
+      (a.name || "").localeCompare(b.name || ""),
+    );
+
+    State.leads = Graph.applyBusinessRules(rawLeads, State.contractors);
 
     // 🚀 THE FIX Part 2: The Smart Activity Fetch
     // Now that the massive Leads download is finished, we safely ask for the Logs
-    let todayLogs = [];
-
     if (isAdmin()) {
       UI.showToast("Syncing historical admin logs...", "info");
 
       // Admins use the hyper-fast Delta Sync to get the entire database
-      // 🚀 UPDATED: Swapped highestActivityId for lastSyncDate
       const logData = await Graph.getActivityLog(
         State.lastSyncDate,
         State.activityLog,
       );
 
       State.activityLog = logData.updatedLogs;
-      // 🚀 UPDATED: Swapped newHighestId for newSyncDate
       State.lastSyncDate = logData.newSyncDate;
-
-      // Extract today's logs purely from RAM so we don't have to fetch them again!
-      const todayStr = new Date().toDateString();
-      todayLogs = State.activityLog.filter(
-        (log) =>
-          log.timestamp && new Date(log.timestamp).toDateString() === todayStr,
-      );
 
       UI.showToast("✅ Admin logs synced!", "success");
     } else {
       UI.showToast("Syncing today's activity...", "info");
 
-      // Standard agents just get the fast daily log
+      // Standard agents get their activity logs
       const logData = await Graph.getActivityLog(
         State.lastSyncDate,
         State.activityLog,
       );
 
       State.activityLog = logData.updatedLogs;
-      // 🚀 UPDATED: Swapped newHighestId for newSyncDate
       State.lastSyncDate = logData.newSyncDate;
 
       UI.showToast("✅ Activity synced!", "success");
     }
+
+    // 🚀 THE BUG FIX: Extract today's logs for BOTH Admins and Agents!
+    // Previously this only ran inside if (isAdmin()), leaving regular agent sales feeds empty.
+    const todayStr = new Date().toDateString();
+    const todayLogs = (State.activityLog || []).filter(
+      (log) =>
+        log.timestamp && new Date(log.timestamp).toDateString() === todayStr,
+    );
 
     // 3. Instant, synchronous math!
     State.todaySales = Graph.getTodaySales(todayLogs);
@@ -2826,13 +2826,26 @@ function renderAssignLeads() {
         // 3. Must not be in the cool-off period
         if (Graph.isInCoolOff(lead)) return false;
 
-        // 🚀 4. THE FIX: Ignore leads with future callback dates
+        // 🚀 4. THE FIX: Account for Callbacks AND Pending Order +1 Day install checks!
         if (lead.callbackAt) {
-          const cbTime = new Date(lead.callbackAt).getTime();
-          const nowTime = new Date().getTime();
+          const scheduledDate = new Date(lead.callbackAt);
+          scheduledDate.setHours(0, 0, 0, 0);
 
-          // If the callback is in the future, it is NOT an active lead right now
-          if (cbTime > nowTime) {
+          const todayMidnight = new Date();
+          todayMidnight.setHours(0, 0, 0, 0);
+
+          let waitingForDate = false;
+
+          if (lead.status === "Pending Order") {
+            // For Pending Orders, we wait until the DAY AFTER the scheduled install date
+            if (todayMidnight <= scheduledDate) waitingForDate = true;
+          } else {
+            // For regular callbacks, we wait until the DAY OF the scheduled callback
+            if (todayMidnight < scheduledDate) waitingForDate = true;
+          }
+
+          // If we are still waiting for the action date, it is NOT blocking their queue right now!
+          if (waitingForDate) {
             return false;
           }
         }
@@ -3600,6 +3613,7 @@ function renderLeads() {
       .map((t) => `<option value="${t}">${t}</option>`)
       .join("");
 
+    // 🚀 INJECTED: The new Delete Batch Trash Can Button
     agentFilter.parentNode.insertAdjacentHTML(
       "beforeend",
       `
@@ -3625,6 +3639,10 @@ function renderLeads() {
       <button id="leads-reset-filters" class="btn-ghost" style="padding: 6px; margin-left: 4px;" title="Reset Filters">
         <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#64748B" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
       </button>
+
+      <button id="leads-delete-batch" class="btn-ghost" style="padding: 6px; color: #ef4444;" title="Delete Selected Batch">
+        <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+      </button>
     `,
     );
   }
@@ -3633,7 +3651,8 @@ function renderLeads() {
   const stateFilter = clone.querySelector("#filter-state");
   const typeFilter = clone.querySelector("#filter-type");
   const sortFilter = clone.querySelector("#filter-sort");
-  const resetFiltersBtn = clone.querySelector("#leads-reset-filters"); // 🚀 Reset Pointer
+  const resetFiltersBtn = clone.querySelector("#leads-reset-filters");
+  const deleteBatchBtn = clone.querySelector("#leads-delete-batch"); // 🚀 The New Button Pointer
 
   if (batchFilter && State.filters.batch)
     batchFilter.value = State.filters.batch;
@@ -3641,6 +3660,144 @@ function renderLeads() {
     stateFilter.value = State.filters.state;
   if (typeFilter && State.filters.type) typeFilter.value = State.filters.type;
   if (sortFilter && State.filters.sort) sortFilter.value = State.filters.sort;
+
+  // ==========================================
+  // 🗑️ THE DELETE BATCH WORKFLOW (WYSIWYG VERSION)
+  // ==========================================
+  if (deleteBatchBtn) {
+    deleteBatchBtn.addEventListener("click", () => {
+      const selectedBatch = batchFilter ? batchFilter.value : "all";
+
+      if (selectedBatch === "all") {
+        alert(
+          "Please select a specific upload batch from the 'Any Batch' dropdown first.",
+        );
+        return;
+      }
+
+      // 🚀 THE WYSIWYG FIX:
+      // 1. Grab the base list respecting global filters (Search, Status, Agent)
+      let baseLeads =
+        typeof getFilteredLeads === "function"
+          ? getFilteredLeads()
+          : State.leads;
+
+      // 2. Grab the exact current values of the local dropdowns
+      const selectedState = stateFilter ? stateFilter.value : "all";
+      const selectedType = typeFilter ? typeFilter.value : "all";
+
+      // 3. Filter down so the trash can ONLY sees what the user sees
+      const leadsToDelete = baseLeads.filter((l) => {
+        const batchMatch = l._batchId === selectedBatch;
+        const stateMatch =
+          selectedState === "all" ||
+          (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
+        const typeMatch =
+          selectedType === "all" ||
+          (l.leadType &&
+            l.leadType.toLowerCase() === selectedType.toLowerCase());
+
+        return batchMatch && stateMatch && typeMatch;
+      });
+
+      if (leadsToDelete.length === 0) {
+        alert("No leads match your current filters within this batch.");
+        return;
+      }
+
+      // 1. Build the Safety Modal
+      const overlay = document.createElement("div");
+      overlay.style.cssText =
+        "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(13, 27, 62, 0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter: blur(3px);";
+
+      const modal = document.createElement("div");
+      modal.style.cssText =
+        "background:#fff; padding:24px; border-radius:12px; width:380px; box-shadow:0 10px 25px rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:16px; color:#0D1B3E;";
+
+      modal.innerHTML = `
+        <div>
+          <h3 style="margin:0 0 4px 0; font-size:18px; color:#ef4444;">⚠️ Delete Filtered Leads?</h3>
+          <p style="margin:0; font-size:13px; color:#64748b; line-height: 1.5;">You are about to permanently remove <strong>${leadsToDelete.length} filtered leads</strong> from this cluster. This will tag them as Deleted in SharePoint.</p>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
+          <button id="cancelBatchDelBtn" class="btn-ghost" style="padding:8px 16px;">Cancel</button>
+          <button id="confirmBatchDelBtn" style="padding:8px 16px; background:#ef4444; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600; display:flex; align-items:center; gap:6px;">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            Wipe Leads
+          </button>
+        </div>
+      `;
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      // 2. Modal Controls
+      document.getElementById("cancelBatchDelBtn").onclick = () =>
+        overlay.remove();
+
+      document.getElementById("confirmBatchDelBtn").onclick = async () => {
+        const confirmBtn = document.getElementById("confirmBatchDelBtn");
+        confirmBtn.innerHTML = `<span>Deleting...</span>`;
+        confirmBtn.style.opacity = "0.7";
+        confirmBtn.disabled = true;
+
+        const idsToDelete = leadsToDelete.map((l) => l.id);
+
+        try {
+          // 🚀 THE SOFT DELETE LOOP (With nested try/catch)
+          const updatePromises = idsToDelete.map(async (id) => {
+            try {
+              await Graph.updateLead(id, { Status: "Deleted" });
+              return { id: id, success: true };
+            } catch (err) {
+              console.error(`Failed to delete lead: ${id}`, err);
+              return { id: id, success: false };
+            }
+          });
+
+          // Wait for all promises to resolve
+          const results = await Promise.all(updatePromises);
+
+          // Filter out the successful ones
+          const successfulIds = results
+            .filter((res) => res.success === true)
+            .map((res) => res.id);
+
+          const failedCount = results.length - successfulIds.length;
+
+          // 3. Immediately wipe successful ones from the local State so the UI feels fast
+          State.leads = State.leads.filter(
+            (l) => !successfulIds.includes(l.id),
+          );
+
+          // 4. Clean the local IndexedDB instantly
+          for (const id of successfulIds) {
+            await LocalDB.deleteItem("leads", id);
+          }
+
+          // 5. Reset the batch filter so they don't look at an empty/broken table
+          State.filters.batch = "all";
+
+          overlay.remove();
+          renderLeads(); // Force the screen to redraw
+
+          if (failedCount > 0) {
+            alert(
+              `Batch complete, but ${failedCount} leads failed to delete. They will remain on your screen.`,
+            );
+          }
+        } catch (error) {
+          console.error("Catastrophic batch failure:", error);
+          alert(
+            "Network error: Could not process the batch. Check the console.",
+          );
+          confirmBtn.innerHTML = `Wipe Leads`;
+          confirmBtn.style.opacity = "1";
+          confirmBtn.disabled = false;
+        }
+      };
+    });
+  }
 
   // ==========================================
   // 📊 PIPELINE INSIGHTS INJECTION
@@ -3736,30 +3893,7 @@ function renderLeads() {
 
       return batchMatch && stateMatch && typeMatch;
     });
-    /* OLD UNPERFORMANT SORT
-    filtered.sort((a, b) => {
-      const countA = a.previousAgents
-        ? a.previousAgents.split(",").filter((x) => x.trim()).length
-        : 0;
-      const countB = b.previousAgents
-        ? b.previousAgents.split(",").filter((x) => x.trim()).length
-        : 0;
 
-      if (selectedSort === "least_worked") {
-        return (
-          countA - countB ||
-          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-        );
-      } else if (selectedSort === "most_worked") {
-        return (
-          countB - countA ||
-          new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-        );
-      } else {
-        return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
-      }
-    });
-  */
     // 🚀 BLAZING FAST SORT (Uses the cached variables)
     filtered.sort((a, b) => {
       if (selectedSort === "least_worked") {
@@ -5137,13 +5271,12 @@ function renderActivity() {
   // ✂️ DELETED: The Predictable Identity Map and Bulletproof Normalizer are completely gone!
   // AgentDirectory now handles all of this globally.
 
-  // 1. EXTRACT UNIQUE DATA FOR DROPDOWNS
+  // 1. EXTRACT UNIQUE DATA FOR DROPDOWNS (SORTED A–Z)
   const uniqueAgents = [
     ...new Set(
-      // 🚀 UPGRADE: Cleanly extract the official names for the dropdown
       activityLog.map((e) => AgentDirectory.getName(e.agent)).filter(Boolean),
     ),
-  ].sort();
+  ].sort((a, b) => a.localeCompare(b));
 
   const uniqueActions = [
     ...new Set(activityLog.map((e) => (e.action || "").trim()).filter(Boolean)),
@@ -5811,9 +5944,16 @@ function paintStats(email, timeframe) {
   }
 }
 
-function getAgentStats(targetEmail, timeframe = "day") {
-  const target = targetEmail.toLowerCase().trim();
-  const isAllAgents = target === "all";
+function getAgentStats(targetInput, timeframe = "day") {
+  const rawTarget = targetInput.toLowerCase().trim();
+  const isAllAgents = rawTarget === "all";
+
+  // 🚀 THE FIX: Force the incoming target to be the official email!
+  // This way, whether the app passes "Jessica Smith" or "j.smith@raimak.com",
+  // the stats engine always compares apples to apples.
+  const target = isAllAgents
+    ? "all"
+    : AgentDirectory.getEmail(rawTarget).toLowerCase();
 
   const now = Date.now();
   let startMs = 0;
@@ -5846,15 +5986,14 @@ function getAgentStats(targetEmail, timeframe = "day") {
       .trim();
     if (!rawAgentInput) return;
 
-    // 🚀 UPGRADE 1: Replace the entire manual Identity Resolver with our robust utility
-    // If it's already an email, getEmail will safely pass it through or resolve it.
-    // If it's a name, it will cleanly convert it to the official email!
-    const finalEmail = AgentDirectory.getEmail(rawAgentInput);
-
-    // 🚀 Get the official display name for leaderboards
+    // 1. Get the official email
+    const finalEmail = AgentDirectory.getEmail(rawAgentInput).toLowerCase();
+    // 2. Get the official display name
     const knownName = AgentDirectory.getName(finalEmail);
 
     const logEmail = finalEmail;
+
+    // 🚀 Now this safely compares two perfectly standardized emails
     if (!isAllAgents && logEmail !== target) return;
     if (!log.action || !log.action.includes("Status:")) return;
 
@@ -5960,9 +6099,13 @@ function getAgentStats(targetEmail, timeframe = "day") {
       0,
     );
   } else {
-    const scoreRow = (State.agentScores || []).find(
-      (s) => (s.AgentEmail || "").toLowerCase().trim() === target,
-    );
+    // 🚀 UPGRADE: Force the score loop to use the Directory too!
+    const scoreRow = (State.agentScores || []).find((s) => {
+      const scoreEmail = AgentDirectory.getEmail(
+        s.AgentEmail || s.AgentName || "",
+      ).toLowerCase();
+      return scoreEmail === target;
+    });
     currentPoints = scoreRow ? scoreRow.CurrentPoints : 0;
   }
 
@@ -5992,9 +6135,9 @@ function getAgentStats(targetEmail, timeframe = "day") {
     (State.activityLog || []).forEach((log) => {
       const rawAgent = (log.agentEmail || log.agent || "").toLowerCase().trim();
 
-      // 🚀 UPGRADE 2: Use the exact same directory fetcher here to ensure consistency
-      const standardizedEmail = AgentDirectory.getEmail(rawAgent);
+      const standardizedEmail = AgentDirectory.getEmail(rawAgent).toLowerCase();
 
+      // 🚀 Now perfectly matches the normalized target
       if (
         standardizedEmail !== target ||
         !log.action ||
@@ -7262,6 +7405,7 @@ const Ticker = {
     setTimeout(() => {
       if (tickerEl.parentElement) {
         tickerEl.parentElement.classList.remove("booting");
+        document.body.classList.add("ticker-ready");
       }
     }, 50);
   },

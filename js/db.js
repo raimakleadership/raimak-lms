@@ -57,4 +57,17 @@ const LocalDB = {
       request.onerror = (event) => reject(event.target.error);
     });
   },
+
+  // 4. Delete a specific item by ID
+  deleteItem: async function (storeName, id) {
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction([storeName], "readwrite");
+      const store = transaction.objectStore(storeName);
+
+      const request = store.delete(id);
+
+      request.onsuccess = () => resolve(true);
+      request.onerror = (event) => reject(event.target.error);
+    });
+  },
 };

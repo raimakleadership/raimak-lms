@@ -98,7 +98,6 @@ const Config = {
 
   roles: {
     admins: [
-      "RichardZacker@raimak.com",
       "B.Hinesley@raimak.com",
       "S.Balleste@raimak.com",
       "N.Caldwell@raimak.com",
@@ -106,6 +105,10 @@ const Config = {
       "m.mcalpine@raimak.com",
       "J.Scroggins@raimak.com",
       "antoinette.bickel@raimak.com",
+      "m.garcia@raimak.com",
+      "j.smith@raimak.com",
+      "c.milland@raimak.com",
+      "c.foor@raimak.com",
     ],
   },
 

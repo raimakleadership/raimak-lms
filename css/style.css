@@ -96,19 +96,12 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.03) 2px,
-    rgba(0, 0, 0, 0.03) 4px
-  );
   pointer-events: none;
   z-index: 9998;
 }
 
 body.ticker-ready {
-  padding-top: 36px;
+  padding-top: 36px !important;
 }
 /* ── Login Screen ───────────────────────────────────────────── */
 .login-screen {
@@ -299,7 +292,7 @@ body.ticker-ready {
 }
 
 body.ticker-ready .sidebar {
-  top: 36px !important;
+  padding-top: 36px !important;
   height: calc(100vh - 36px) !important;
 }
 
