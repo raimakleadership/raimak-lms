@@ -3516,6 +3516,9 @@ function renderLeads() {
           <option value="OFS">OFS Leads</option>
           <option value="MLR">MLR Leads</option>
           <option value="Forced">Forced Leads</option>
+          <!-- 🚀 NEW D2D PRE-SCRUBBED TYPES -->
+          <option value="D2D TDM">D2D TDM</option>
+          <option value="D2D OFS">D2D OFS</option>
         </select>
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:8px;">
           <button id="cancelTypeBtn" class="btn-ghost" style="padding:8px 16px;">Cancel</button>
@@ -4531,7 +4534,8 @@ async function handleFileSelect(event) {
 
 // The CSV Parser (Handles quotes and commas flawlessly)
 function parseCSV(text) {
-  const lines = text.split("\n").filter((line) => line.trim() !== "");
+  // 🚀 THE SMALL UPGRADE: .replace(/\r/g, "") strips Windows carriage returns before splitting!
+  const lines = text.replace(/\r/g, "").split("\n").filter((line) => line.trim() !== "");
   const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
   const data = [];
 
@@ -4547,6 +4551,115 @@ function parseCSV(text) {
     data.push(row);
   }
   return data;
+}
+
+/**
+ * Helper: Case-insensitive lookup for CSV row properties
+ */
+function getCSVField(row, possibleKeys, defaultValue = "") {
+  const rowKeys = Object.keys(row);
+  for (const key of possibleKeys) {
+    const match = rowKeys.find(
+      (k) => k.trim().toLowerCase() === key.trim().toLowerCase()
+    );
+    if (match && row[match] !== undefined && row[match] !== null) {
+      return String(row[match]).trim();
+    }
+  }
+  return defaultValue;
+}
+
+/**
+ * Maps a raw CSV row into a clean SharePoint Graph API fields payload.
+ * Strictly uses internal SharePoint column names to prevent 400 Bad Request errors.
+ */
+function mapCSVRowToSharePointFields(row, selectedLeadType) {
+  // 1. RESOLVE NAME & ADDRESS FIELDS
+  const firstName = getCSVField(row, ["FirstName", "First Name", "First"]);
+  const lastName = getCSVField(row, ["LastName", "Last Name", "Last"]);
+
+  // Combine Number + Streetname if StreetAddress isn't already a full address
+  let street = getCSVField(row, ["StreetAddress", "Street Address", "Address", "WorkAddress"]);
+  if (!street) {
+    const num = getCSVField(row, ["Number", "House Number", "HouseNo"]);
+    const stName = getCSVField(row, ["Streetname", "Street Name", "Street"]);
+    street = `${num} ${stName}`.trim();
+  }
+
+  // Combine Street + Street 2 (if present) into WorkAddress
+  const street2 = getCSVField(row, ["Street2", "Address2", "Apt", "Unit"]);
+  const fullWorkAddress = street2 ? `${street} ${street2}`.trim() : street;
+
+  const city = getCSVField(row, ["City", "WorkCity"]);
+  const state = getCSVField(row, ["State"], "FL");
+  const zip = getCSVField(row, ["Zip", "ZipCode", "PostalCode"]);
+
+  // 2. RESOLVE PRE-SCRUBBED NEW FIELDS
+  const btn = getCSVField(row, ["BTN", "Billing Phone", "Phone"]);
+  const cbr = getCSVField(row, ["CBR", "Contact Phone", "Callback Number"]);
+  const rawMRC = getCSVField(row, ["MRC", "MonthlyRecurringCharge", "Monthly Charge"]);
+  const cleanMRC = rawMRC ? rawMRC.replace(/[^0-9.]/g, "") : "0";
+  const rawProducts = getCSVField(row, ["PRODUCTS", "Products", "Product"]);
+
+  // 3. AUTO PAY LOGIC
+  let autoPayValue = "No Auto Pay";
+  const rawAutoPay = getCSVField(
+    row,
+    ["AUTO PAY", "AutoPay", "AUTOPAY", "Auto Pay"]
+  ).toUpperCase();
+
+  if (rawAutoPay === "ACH" || rawAutoPay.includes("ACH")) {
+    autoPayValue = "ACH - Debit Card";
+  } else if (
+    rawAutoPay === "CC" ||
+    rawAutoPay === "CREDIT" ||
+    rawAutoPay.includes("CC")
+  ) {
+    autoPayValue = "ACH - Credit Card";
+  } else if (
+    rawAutoPay === "N" ||
+    rawAutoPay === "NO" ||
+    rawAutoPay === "NONE"
+  ) {
+    autoPayValue = "No Auto Pay";
+  }
+
+  // 4. CURRENT PRODUCTS & NOTES BUSINESS RULES
+  let currentProductsValue = "";
+  if (selectedLeadType === "D2D TDM") {
+    currentProductsValue = "Phone";
+  }
+
+  // Save the pre-scrubbed products list as an introductory Note
+  let notesValue = "";
+  if (rawProducts) {
+    notesValue = `Pre-Scrubbed Products: ${rawProducts}`;
+  }
+
+  // 5. BUILD THE FINAL SHAREPOINT GRAPH PAYLOAD
+  // Strictly matches your SharePoint schema without introducing invalid standalone keys
+  return {
+    Title: `${firstName} ${lastName}`.trim() || "Unknown Lead",
+    FirstName: firstName,
+    LastName: lastName,
+    WorkAddress: fullWorkAddress, // Combined Street + Street 2
+    WorkCity: city,
+    State: state,
+    Zip: zip,
+
+    // Core Lead Metadata (Using exact SharePoint internal names)
+    Lead_x0020_Type: selectedLeadType,
+    Agent_x0020_Assigned: "",
+    Status: "New",
+
+    // New Pre-Scrubbed Fields
+    BTN: btn,
+    CBR: cbr,
+    MonthlyRecurringCharge_x0028_MRC: cleanMRC,
+    AutoPay: autoPayValue,
+    CurrentProducts: currentProductsValue,
+    Notes: notesValue,
+  };
 }
 
 async function uploadLeadsToSharePoint(csvData, leadType) {
@@ -4572,11 +4685,16 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   let duplicateCount = 0;
 
   csvData.forEach((row) => {
-    const key = generateKey(
-      row["FirstName"],
-      row["LastName"],
-      row["StreetAddress"],
-    );
+    const first = getCSVField(row, ["FirstName", "First Name", "First"]);
+    const last = getCSVField(row, ["LastName", "Last Name", "Last"]);
+    let street = getCSVField(row, ["StreetAddress", "Street Address", "Address", "WorkAddress"]);
+    if (!street) {
+      const num = getCSVField(row, ["Number", "House Number", "HouseNo"]);
+      const stName = getCSVField(row, ["Streetname", "Street Name", "Street"]);
+      street = `${num} ${stName}`.trim();
+    }
+
+    const key = generateKey(first, last, street);
     if (existingKeys.has(key)) {
       duplicateCount++;
     } else {
@@ -4624,7 +4742,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   const batchSize = 20;
 
   // ==========================================
-  // 📦 4. THE BATCHING ENGINE
+  // 📦 4. THE BATCHING ENGINE (WITH SMART FIELDS)
   // ==========================================
   for (let i = 0; i < totalLeads; i += batchSize) {
     const chunk = validLeads.slice(i, i + batchSize);
@@ -4636,29 +4754,21 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
     }
 
     const batchRequests = chunk.map((row, index) => {
+      // 🚀 THE UPGRADE: All mapping rules applied dynamically here
+      const mappedFields = mapCSVRowToSharePointFields(row, leadType);
+
       return {
         id: String(index + 1),
         method: "POST",
         url: relativeUploadUrl,
         headers: { "Content-Type": "application/json" },
         body: {
-          fields: {
-            FirstName: row["FirstName"],
-            LastName: row["LastName"],
-            WorkAddress: row["StreetAddress"],
-            WorkCity: row["City"],
-            State: row["State"],
-            Zip: row["Zip"],
-            Lead_x0020_Type: leadType,
-            Agent_x0020_Assigned: "",
-            Status: "New",
-          },
+          fields: mappedFields,
         },
       };
     });
 
     try {
-      // 🚀 THE UPGRADE: Aligning with the new apiFetch options object
       const batchResponse = await Graph.apiFetch(batchUrl, {
         method: "POST",
         body: { requests: batchRequests },
