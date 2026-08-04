@@ -112,6 +112,29 @@ const Config = {
     ],
   },
 
+  // In config.js -> Config object:
+  salesCenterAgents: [
+    "m.mcalpine@raimak.com",
+    "j.torres@raimak.com",
+    "n.caldwell@raimak.com",
+    "k.leroux@raimak.com",
+    "c.scarett@raimak.com",
+    "jennifer.smith@raimak.com",
+    "a.cooper@raimak.com",
+    "a.gonzalez@raimak.com",
+    "t.mathis@raimak.com",
+    "t.henry@raimak.com",
+    "S.balleste@raimak.com",
+    "n.jones@raimak.com",
+    "m.stevens@raimak.com",
+    "k.rountree@raimak.com",
+    "j.scroggins@raimak.com",
+    "h.gatlin@raimak.com",
+    "c.vandeboe@raimak.com",
+    "h.norris@raimak.com",
+    "a.owens@raimak.com",
+  ],
+
   scopes: ["Sites.ReadWrite.All", "User.Read"],
 
   salesFeedInterval: 45000,

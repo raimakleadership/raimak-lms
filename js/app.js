@@ -2907,6 +2907,44 @@ function renderAssignLeads() {
   updateTableAndMath();
 }
 
+/**
+ * Helper: Checks if a lead type is reserved for D2D agents
+ */
+function isD2DLeadType(leadType) {
+  const type = (leadType || "").trim().toUpperCase();
+  return type === "D2D TDM" || type === "D2D OFS";
+}
+
+/**
+ * Helper: Checks if an agent belongs to the Sales Center roster
+ * (Anyone NOT matching this list is automatically treated as D2D)
+ */
+function isSalesCenterAgent(agentIdentifier) {
+  if (!agentIdentifier || !Config.salesCenterAgents) return false;
+  const target = String(agentIdentifier).trim().toLowerCase();
+
+  // 1. Direct email string match
+  if (
+    Config.salesCenterAgents.some((email) => email.toLowerCase() === target)
+  ) {
+    return true;
+  }
+
+  // 2. Lookup by display name in State.contractors to verify their official email
+  const contractor = (State.contractors || []).find(
+    (c) =>
+      (c.name && c.name.toLowerCase() === target) ||
+      (c.email && c.email.toLowerCase() === target),
+  );
+
+  if (contractor && contractor.email) {
+    return Config.salesCenterAgents.some(
+      (email) => email.toLowerCase() === contractor.email.toLowerCase(),
+    );
+  }
+
+  return false;
+}
 async function assignLead(leadId) {
   const select = document.getElementById("assign-" + leadId);
   const agent = select && select.value;
@@ -2944,7 +2982,7 @@ async function assignLead(leadId) {
 }
 
 async function bulkAssignToSelectedAgent() {
-  // Grab all the dropdown values (including the new Batch and Sort!)
+  // Grab all the dropdown values (including Batch and Sort)
   const agentSelect = document.getElementById("bulk-agent-select");
   const agentName = agentSelect ? agentSelect.value : "";
 
@@ -2975,6 +3013,35 @@ async function bulkAssignToSelectedAgent() {
     return;
   }
 
+  // ==========================================
+  // 🛡️ THE INVERTED ROUTING BOUNCER (Early Validation)
+  // ==========================================
+  const agentIsSalesCenter =
+    typeof isSalesCenterAgent === "function"
+      ? isSalesCenterAgent(agentName)
+      : true; // Safe fallback
+
+  if (selectedType !== "all") {
+    const typeIsD2D =
+      typeof isD2DLeadType === "function" && isD2DLeadType(selectedType);
+
+    if (agentIsSalesCenter && typeIsD2D) {
+      UI.showToast(
+        `🚫 Routing Error: ${agentName} is a Sales Center agent and cannot be assigned ${selectedType} leads.`,
+        "error",
+      );
+      return;
+    }
+    if (!agentIsSalesCenter && !typeIsD2D) {
+      UI.showToast(
+        `🚫 Routing Error: ${agentName} is a D2D agent and can only be assigned D2D TDM/OFS leads.`,
+        "error",
+      );
+      return;
+    }
+  }
+  // ==========================================
+
   // 1. Get the base unassigned pool
   const unassigned = State.leads.filter(function (l) {
     const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
@@ -2983,7 +3050,7 @@ async function bulkAssignToSelectedAgent() {
     return isValidLead && isAvailable;
   });
 
-  // 2. Filter using the EXACT same rules as the table preview
+  // 2. Filter using WYSIWYG rules + Inverted Routing Bouncer
   const validLeads = unassigned.filter(function (l) {
     const typeMatch =
       selectedType === "all" ||
@@ -2992,18 +3059,29 @@ async function bulkAssignToSelectedAgent() {
       selectedState === "all" ||
       (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
 
-    // Check our new dynamic batch tags
     const batchMatch = selectedBatch === "all" || l._batchId === selectedBatch;
 
-    // Check if it's completely untouched
     const unworkedMatch =
       !requireUnworked || (!l.previousAgents && !l.currentMRC);
 
-    // 🛑 CRITICAL BOUNCER: Make sure the selected agent hasn't worked this lead before!
+    // Make sure the selected agent hasn't worked this lead before
     const prevAgents = (l.previousAgents || "").toLowerCase();
     const agentMatch = !prevAgents.includes(agentName.toLowerCase());
 
-    return typeMatch && stateMatch && batchMatch && unworkedMatch && agentMatch;
+    // 🛡️ INVERTED BOUNCER ROUTING CHECK:
+    // Ensures when "Any Type" is selected, Sales Center agents don't pull D2D leads (and vice versa)
+    const isD2DLead =
+      typeof isD2DLeadType === "function" && isD2DLeadType(l.leadType);
+    const routingMatch = agentIsSalesCenter ? !isD2DLead : isD2DLead;
+
+    return (
+      typeMatch &&
+      stateMatch &&
+      batchMatch &&
+      unworkedMatch &&
+      agentMatch &&
+      routingMatch
+    );
   });
 
   // 3. SORT USING THE EXACT SAME RULES AS THE TABLE PREVIEW 🚀
@@ -3038,7 +3116,7 @@ async function bulkAssignToSelectedAgent() {
   // 4. Validation Checks
   if (validLeads.length === 0) {
     UI.showToast(
-      `${agentName} has no available ${combinedLabel} left to work with these filters!`,
+      `${agentName} has no available eligible ${combinedLabel} left to work with these filters!`,
       "warning",
     );
     return;
@@ -3046,7 +3124,7 @@ async function bulkAssignToSelectedAgent() {
 
   if (qty > validLeads.length) {
     UI.showToast(
-      `Only ${validLeads.length} ${combinedLabel} available for ${agentName} (already worked the rest).`,
+      `Only ${validLeads.length} eligible ${combinedLabel} available for ${agentName} (already worked or restricted).`,
       "warning",
     );
     return;
@@ -3072,79 +3150,6 @@ async function bulkAssignToSelectedAgent() {
   } catch (err) {
     console.error("Bulk Assign Error:", err);
     UI.showToast("Failed to assign leads: " + err.message, "error");
-  } finally {
-    setLoading(false);
-  }
-}
-
-async function bulkAssignByQuantity() {
-  const { leads, contractors } = State;
-  const unassigned = leads.filter(function (l) {
-    return !l.assignedTo && !Config.terminalStatuses.includes(l.status);
-  });
-
-  const plan = [];
-  contractors.forEach(function (c) {
-    const qty =
-      parseInt((document.getElementById("qty-" + c.name) || {}).value || "0") ||
-      0;
-    if (qty > 0) plan.push({ agent: c.name, qty: qty });
-  });
-
-  if (!plan.length) {
-    UI.showToast("Please enter a quantity for at least one agent.", "error");
-    return;
-  }
-
-  const totalRequested = plan.reduce(function (s, p) {
-    return s + p.qty;
-  }, 0);
-  if (totalRequested > unassigned.length) {
-    UI.showToast(
-      "Total (" +
-        totalRequested +
-        ") exceeds unassigned leads (" +
-        unassigned.length +
-        "). Reduce quantities.",
-      "error",
-    );
-    return;
-  }
-
-  const summary = plan
-    .map(function (p) {
-      return p.qty + " → " + p.agent;
-    })
-    .join("\n");
-  if (
-    !confirm(
-      "Assign leads by quantity?\n\n" +
-        summary +
-        "\n\nTotal: " +
-        totalRequested +
-        " leads",
-    )
-  )
-    return;
-
-  setLoading(true);
-  try {
-    let idx = 0;
-    for (var p = 0; p < plan.length; p++) {
-      for (var q = 0; q < plan[p].qty; q++) {
-        if (idx >= unassigned.length) break;
-        await Graph.assignAgent(unassigned[idx].id, plan[p].agent);
-        idx++;
-      }
-    }
-    UI.showToast(
-      "Assigned " + totalRequested + " leads successfully!",
-      "success",
-    );
-    await loadAllData();
-    renderAssignLeads();
-  } catch (err) {
-    UI.showToast("Failed: " + err.message, "error");
   } finally {
     setLoading(false);
   }
@@ -4535,7 +4540,10 @@ async function handleFileSelect(event) {
 // The CSV Parser (Handles quotes and commas flawlessly)
 function parseCSV(text) {
   // 🚀 THE SMALL UPGRADE: .replace(/\r/g, "") strips Windows carriage returns before splitting!
-  const lines = text.replace(/\r/g, "").split("\n").filter((line) => line.trim() !== "");
+  const lines = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .filter((line) => line.trim() !== "");
   const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
   const data = [];
 
@@ -4560,7 +4568,7 @@ function getCSVField(row, possibleKeys, defaultValue = "") {
   const rowKeys = Object.keys(row);
   for (const key of possibleKeys) {
     const match = rowKeys.find(
-      (k) => k.trim().toLowerCase() === key.trim().toLowerCase()
+      (k) => k.trim().toLowerCase() === key.trim().toLowerCase(),
     );
     if (match && row[match] !== undefined && row[match] !== null) {
       return String(row[match]).trim();
@@ -4579,7 +4587,12 @@ function mapCSVRowToSharePointFields(row, selectedLeadType) {
   const lastName = getCSVField(row, ["LastName", "Last Name", "Last"]);
 
   // Combine Number + Streetname if StreetAddress isn't already a full address
-  let street = getCSVField(row, ["StreetAddress", "Street Address", "Address", "WorkAddress"]);
+  let street = getCSVField(row, [
+    "StreetAddress",
+    "Street Address",
+    "Address",
+    "WorkAddress",
+  ]);
   if (!street) {
     const num = getCSVField(row, ["Number", "House Number", "HouseNo"]);
     const stName = getCSVField(row, ["Streetname", "Street Name", "Street"]);
@@ -4597,16 +4610,22 @@ function mapCSVRowToSharePointFields(row, selectedLeadType) {
   // 2. RESOLVE PRE-SCRUBBED NEW FIELDS
   const btn = getCSVField(row, ["BTN", "Billing Phone", "Phone"]);
   const cbr = getCSVField(row, ["CBR", "Contact Phone", "Callback Number"]);
-  const rawMRC = getCSVField(row, ["MRC", "MonthlyRecurringCharge", "Monthly Charge"]);
+  const rawMRC = getCSVField(row, [
+    "MRC",
+    "MonthlyRecurringCharge",
+    "Monthly Charge",
+  ]);
   const cleanMRC = rawMRC ? rawMRC.replace(/[^0-9.]/g, "") : "0";
   const rawProducts = getCSVField(row, ["PRODUCTS", "Products", "Product"]);
 
   // 3. AUTO PAY LOGIC
   let autoPayValue = "No Auto Pay";
-  const rawAutoPay = getCSVField(
-    row,
-    ["AUTO PAY", "AutoPay", "AUTOPAY", "Auto Pay"]
-  ).toUpperCase();
+  const rawAutoPay = getCSVField(row, [
+    "AUTO PAY",
+    "AutoPay",
+    "AUTOPAY",
+    "Auto Pay",
+  ]).toUpperCase();
 
   if (rawAutoPay === "ACH" || rawAutoPay.includes("ACH")) {
     autoPayValue = "ACH - Debit Card";
@@ -4687,7 +4706,12 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   csvData.forEach((row) => {
     const first = getCSVField(row, ["FirstName", "First Name", "First"]);
     const last = getCSVField(row, ["LastName", "Last Name", "Last"]);
-    let street = getCSVField(row, ["StreetAddress", "Street Address", "Address", "WorkAddress"]);
+    let street = getCSVField(row, [
+      "StreetAddress",
+      "Street Address",
+      "Address",
+      "WorkAddress",
+    ]);
     if (!street) {
       const num = getCSVField(row, ["Number", "House Number", "HouseNo"]);
       const stName = getCSVField(row, ["Streetname", "Street Name", "Street"]);
