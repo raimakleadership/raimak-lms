@@ -2919,31 +2919,40 @@ function isD2DLeadType(leadType) {
  * Helper: Checks if an agent belongs to the Sales Center roster
  * (Anyone NOT matching this list is automatically treated as D2D)
  */
-function isSalesCenterAgent(agentIdentifier) {
-  if (!agentIdentifier || !Config.salesCenterAgents) return false;
+function canAgentWorkLeadType(agentIdentifier, leadType) {
+  if (!agentIdentifier) return false;
   const target = String(agentIdentifier).trim().toLowerCase();
 
-  // 1. Direct email string match
-  if (
-    Config.salesCenterAgents.some((email) => email.toLowerCase() === target)
-  ) {
+  // Helper to check if the target matches an email/name in a config array
+  const isInList = (list) => {
+    if (!list || !Array.isArray(list)) return false;
+    if (list.some((email) => email.toLowerCase() === target)) return true;
+
+    const contractor = (State.contractors || []).find(
+      (c) =>
+        (c.name && c.name.toLowerCase() === target) ||
+        (c.email && c.email.toLowerCase() === target),
+    );
+
+    return contractor && contractor.email
+      ? list.some(
+          (email) => email.toLowerCase() === contractor.email.toLowerCase(),
+        )
+      : false;
+  };
+
+  // 1. VIP Universal Bypass: Can work literally any lead type!
+  if (isInList(Config.universalAgents)) {
     return true;
   }
 
-  // 2. Lookup by display name in State.contractors to verify their official email
-  const contractor = (State.contractors || []).find(
-    (c) =>
-      (c.name && c.name.toLowerCase() === target) ||
-      (c.email && c.email.toLowerCase() === target),
-  );
+  // 2. Identify the lead queue
+  const type = (leadType || "").trim().toUpperCase();
+  const isD2DLead = type === "D2D TDM" || type === "D2D OFS";
 
-  if (contractor && contractor.email) {
-    return Config.salesCenterAgents.some(
-      (email) => email.toLowerCase() === contractor.email.toLowerCase(),
-    );
-  }
-
-  return false;
+  // 3. Match Sales Center agents to Sales Center leads, and D2D to D2D leads
+  const isSalesCenter = isInList(Config.salesCenterAgents);
+  return isSalesCenter ? !isD2DLead : isD2DLead;
 }
 async function assignLead(leadId) {
   const select = document.getElementById("assign-" + leadId);
@@ -2982,7 +2991,7 @@ async function assignLead(leadId) {
 }
 
 async function bulkAssignToSelectedAgent() {
-  // Grab all the dropdown values (including Batch and Sort)
+  // 1. Grab all WYSIWYG dropdown filters from the UI
   const agentSelect = document.getElementById("bulk-agent-select");
   const agentName = agentSelect ? agentSelect.value : "";
 
@@ -3014,35 +3023,21 @@ async function bulkAssignToSelectedAgent() {
   }
 
   // ==========================================
-  // 🛡️ THE INVERTED ROUTING BOUNCER (Early Validation)
+  // 🛡️ EARLY ROUTING VALIDATION
   // ==========================================
-  const agentIsSalesCenter =
-    typeof isSalesCenterAgent === "function"
-      ? isSalesCenterAgent(agentName)
-      : true; // Safe fallback
-
-  if (selectedType !== "all") {
-    const typeIsD2D =
-      typeof isD2DLeadType === "function" && isD2DLeadType(selectedType);
-
-    if (agentIsSalesCenter && typeIsD2D) {
-      UI.showToast(
-        `🚫 Routing Error: ${agentName} is a Sales Center agent and cannot be assigned ${selectedType} leads.`,
-        "error",
-      );
-      return;
-    }
-    if (!agentIsSalesCenter && !typeIsD2D) {
-      UI.showToast(
-        `🚫 Routing Error: ${agentName} is a D2D agent and can only be assigned D2D TDM/OFS leads.`,
-        "error",
-      );
-      return;
-    }
+  if (
+    selectedType !== "all" &&
+    !canAgentWorkLeadType(agentName, selectedType)
+  ) {
+    UI.showToast(
+      `🚫 Routing Error: ${agentName} is not authorized to work ${selectedType} leads based on queue rules.`,
+      "error",
+    );
+    return;
   }
   // ==========================================
 
-  // 1. Get the base unassigned pool
+  // 2. Get the base unassigned pool
   const unassigned = State.leads.filter(function (l) {
     const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
     const isAvailable =
@@ -3050,7 +3045,7 @@ async function bulkAssignToSelectedAgent() {
     return isValidLead && isAvailable;
   });
 
-  // 2. Filter using WYSIWYG rules + Inverted Routing Bouncer
+  // 3. Filter using WYSIWYG rules + Smart Routing Bouncer
   const validLeads = unassigned.filter(function (l) {
     const typeMatch =
       selectedType === "all" ||
@@ -3058,9 +3053,7 @@ async function bulkAssignToSelectedAgent() {
     const stateMatch =
       selectedState === "all" ||
       (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
-
     const batchMatch = selectedBatch === "all" || l._batchId === selectedBatch;
-
     const unworkedMatch =
       !requireUnworked || (!l.previousAgents && !l.currentMRC);
 
@@ -3068,11 +3061,8 @@ async function bulkAssignToSelectedAgent() {
     const prevAgents = (l.previousAgents || "").toLowerCase();
     const agentMatch = !prevAgents.includes(agentName.toLowerCase());
 
-    // 🛡️ INVERTED BOUNCER ROUTING CHECK:
-    // Ensures when "Any Type" is selected, Sales Center agents don't pull D2D leads (and vice versa)
-    const isD2DLead =
-      typeof isD2DLeadType === "function" && isD2DLeadType(l.leadType);
-    const routingMatch = agentIsSalesCenter ? !isD2DLead : isD2DLead;
+    // 🛡️ ONE-LINE ROUTING CHECK:
+    const routingMatch = canAgentWorkLeadType(agentName, l.leadType);
 
     return (
       typeMatch &&
@@ -3084,7 +3074,7 @@ async function bulkAssignToSelectedAgent() {
     );
   });
 
-  // 3. SORT USING THE EXACT SAME RULES AS THE TABLE PREVIEW 🚀
+  // 4. SORT USING THE EXACT SAME RULES AS THE TABLE PREVIEW 🚀
   validLeads.sort((a, b) => {
     const countA = a.previousAgents
       ? a.previousAgents.split(",").filter((x) => x.trim()).length
@@ -3113,7 +3103,7 @@ async function bulkAssignToSelectedAgent() {
   const typeLabel = selectedType === "all" ? "leads" : `${selectedType} leads`;
   const combinedLabel = `${stateLabel}${typeLabel}`.trim();
 
-  // 4. Validation Checks
+  // 5. Validation Checks
   if (validLeads.length === 0) {
     UI.showToast(
       `${agentName} has no available eligible ${combinedLabel} left to work with these filters!`,
@@ -3124,13 +3114,13 @@ async function bulkAssignToSelectedAgent() {
 
   if (qty > validLeads.length) {
     UI.showToast(
-      `Only ${validLeads.length} eligible ${combinedLabel} available for ${agentName} (already worked or restricted).`,
+      `Only ${validLeads.length} eligible ${combinedLabel} available for ${agentName} (already worked or restricted by queue).`,
       "warning",
     );
     return;
   }
 
-  // 5. Slice from the newly sorted top!
+  // 6. Slice from the newly sorted top!
   const leadsToAssign = validLeads.slice(0, qty);
 
   setLoading(true);

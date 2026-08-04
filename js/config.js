@@ -136,6 +136,10 @@ const Config = {
     "j.redix@raimak.com",
   ],
 
+  universalAgents: [
+    "j.redix@raimak.com", // Add their company email here!
+  ],
+
   scopes: ["Sites.ReadWrite.All", "User.Read"],
 
   salesFeedInterval: 45000,
