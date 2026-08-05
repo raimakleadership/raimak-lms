@@ -2923,25 +2923,35 @@ function canAgentWorkLeadType(agentIdentifier, leadType) {
   if (!agentIdentifier) return false;
   const target = String(agentIdentifier).trim().toLowerCase();
 
-  // Helper to check if the target matches an email/name in a config array
+  // Bulletproof helper: strips spaces on both sides and checks name + email
   const isInList = (list) => {
     if (!list || !Array.isArray(list)) return false;
-    if (list.some((email) => email.toLowerCase() === target)) return true;
 
-    const contractor = (State.contractors || []).find(
-      (c) =>
-        (c.name && c.name.toLowerCase() === target) ||
-        (c.email && c.email.toLowerCase() === target),
-    );
+    // 1. Direct match against config items (with .trim() added!)
+    if (list.some((item) => String(item).trim().toLowerCase() === target)) {
+      return true;
+    }
 
-    return contractor && contractor.email
-      ? list.some(
-          (email) => email.toLowerCase() === contractor.email.toLowerCase(),
-        )
-      : false;
+    // 2. Lookup contractor by Name OR Email in State.contractors
+    const contractor = (State.contractors || []).find((c) => {
+      const cName = c.name ? String(c.name).trim().toLowerCase() : "";
+      const cEmail = c.email ? String(c.email).trim().toLowerCase() : "";
+      return cName === target || cEmail === target;
+    });
+
+    if (contractor && contractor.email) {
+      const cleanContractorEmail = String(contractor.email)
+        .trim()
+        .toLowerCase();
+      return list.some(
+        (item) => String(item).trim().toLowerCase() === cleanContractorEmail,
+      );
+    }
+
+    return false;
   };
 
-  // 1. VIP Universal Bypass: Can work literally any lead type!
+  // 1. VIP Universal Bypass
   if (isInList(Config.universalAgents)) {
     return true;
   }
@@ -2950,8 +2960,12 @@ function canAgentWorkLeadType(agentIdentifier, leadType) {
   const type = (leadType || "").trim().toUpperCase();
   const isD2DLead = type === "D2D TDM" || type === "D2D OFS";
 
-  // 3. Match Sales Center agents to Sales Center leads, and D2D to D2D leads
+  // 3. Check Sales Center Roster
   const isSalesCenter = isInList(Config.salesCenterAgents);
+
+  // 🕵️ DEBUG LOG: Uncomment this line if an agent is still having trouble!
+  // console.log(`[Routing Check] Agent: "${target}" | Sales Center? ${isSalesCenter} | Target Type: "${type}"`);
+
   return isSalesCenter ? !isD2DLead : isD2DLead;
 }
 async function assignLead(leadId) {
