@@ -2157,10 +2157,31 @@ async function agentSaveAll(leadId) {
     (document.getElementById("f-callback-date") || {}).value || "";
 
   // ==========================================
-  // 🛑 THE BOUNCER: Prevent saving as "New"
+  // 🛑 THE BOUNCER: Require Status Change & Required Notes
   // ==========================================
   if (newStatus === "New") {
     return UI.showToast("Please update the lead status from 'New'.", "warning");
+  }
+
+  // 📝 REQUIRED NOTE CHECK: Blocks saving if the textarea is empty or just spaces
+  if (!newNote.trim()) {
+    const notesEl = document.getElementById("feed-notes");
+    if (notesEl) {
+      notesEl.style.transition = "border-color 0.3s, box-shadow 0.3s";
+      notesEl.style.borderColor = "var(--red, #ef4444)";
+      notesEl.style.boxShadow = "0 0 8px rgba(239, 68, 68, 0.4)";
+      notesEl.focus();
+
+      // Remove the red highlight after 2.5 seconds
+      setTimeout(() => {
+        notesEl.style.borderColor = "";
+        notesEl.style.boxShadow = "";
+      }, 2500);
+    }
+    return UI.showToast(
+      "Please enter a note describing the interaction before saving!",
+      "error",
+    );
   }
 
   // Validation (Terminal Bypass)
