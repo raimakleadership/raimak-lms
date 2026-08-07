@@ -4566,19 +4566,37 @@ function parseCSV(text) {
 }
 
 /**
- * Helper: Case-insensitive lookup for CSV row properties
+ * Smart CSV Field Lookup:
+ * Hunts down a column value in a parsed CSV row regardless of UPPERCASE,
+ * lowercase, or accidental leading/trailing spaces in the column header.
  */
-function getCSVField(row, possibleKeys, defaultValue = "") {
+function getCSVField(row, candidates) {
+  if (!row || !candidates || !Array.isArray(candidates)) return "";
+
+  // 1. Get all actual column header names present in this CSV row
   const rowKeys = Object.keys(row);
-  for (const key of possibleKeys) {
-    const match = rowKeys.find(
-      (k) => k.trim().toLowerCase() === key.trim().toLowerCase(),
+
+  for (const candidate of candidates) {
+    // Clean our search term (e.g., "MRC" -> "mrc")
+    const cleanCandidate = String(candidate).trim().toLowerCase();
+
+    // 2. Search row keys case-insensitively
+    const matchingKey = rowKeys.find(
+      (key) => String(key).trim().toLowerCase() === cleanCandidate,
     );
-    if (match && row[match] !== undefined && row[match] !== null) {
-      return String(row[match]).trim();
+
+    // 3. If we find a match and the cell isn't empty, return its trimmed value!
+    if (
+      matchingKey &&
+      row[matchingKey] !== undefined &&
+      row[matchingKey] !== null &&
+      String(row[matchingKey]).trim() !== ""
+    ) {
+      return String(row[matchingKey]).trim();
     }
   }
-  return defaultValue;
+
+  return "";
 }
 
 /**
@@ -4616,6 +4634,9 @@ function mapCSVRowToSharePointFields(row, selectedLeadType) {
   const cbr = getCSVField(row, ["CBR", "Contact Phone", "Callback Number"]);
   const rawMRC = getCSVField(row, [
     "MRC",
+    "Price",
+    "Cost",
+    "Monthly Price",
     "MonthlyRecurringCharge",
     "Monthly Charge",
   ]);
