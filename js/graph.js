@@ -1277,7 +1277,7 @@ const Graph = (() => {
       // 🚀 THE CLOCK FIX: Check 'lastTouchedOn' first!
       // When a lead is assigned or worked, this updates, resetting the recycle countdown
       // so new agents aren't instantly penalized for an old createdAt date.
-      const ref = lead.lastTouchedOn || lead.lastContacted || lead.createdAt;
+      const ref = lead.LastTouchedOn || lead.lastContacted;
 
       if (
         ref &&
