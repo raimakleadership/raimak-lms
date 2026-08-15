@@ -573,8 +573,33 @@ function showAppShell() {
 // ============================================================
 //  NAVIGATION
 // ============================================================
+// ============================================================
+//  NAVIGATION
+// ============================================================
 function navigate(view) {
+  // ==========================================
+  // 🧹 THE GLOBAL GARBAGE COLLECTOR
+  // ==========================================
+  // 1. Kill any active UI timers
   if (window._clockTimer) clearInterval(window._clockTimer);
+  if (window._vaultInterval) clearInterval(window._vaultInterval);
+
+  // 2. Assassinate Ghost Charts! (Prevents severe memory leaks)
+  if (window._activeInsightChart) {
+    window._activeInsightChart.destroy();
+    window._activeInsightChart = null;
+  }
+
+  if (window._chartInstances) {
+    Object.values(window._chartInstances).forEach((chart) => {
+      if (chart && typeof chart.destroy === "function") {
+        chart.destroy();
+      }
+    });
+    window._chartInstances = {};
+  }
+  // ==========================================
+
   const adminOnly = [
     "leads",
     "drip",
@@ -583,15 +608,19 @@ function navigate(view) {
     "contractors",
     "activity",
   ];
+
   if (!isAdmin() && adminOnly.includes(view)) {
     view = "myleads";
   }
+
   State.currentView = view;
   document.querySelectorAll(".nav-item").forEach(function (el) {
     el.classList.remove("active");
   });
+
   const navEl = document.querySelector("[data-view='" + view + "']");
   if (navEl) navEl.classList.add("active");
+
   switch (view) {
     case "dashboard":
       renderDashboard();
@@ -605,11 +634,9 @@ function navigate(view) {
     case "callbacks":
       renderCallBacks();
       break;
-
     case "stats":
       renderStats();
       break;
-
     case "drip":
       renderDripFeed();
       break;
@@ -947,7 +974,8 @@ async function recycleAllLeads() {
 }
 
 function startSalesFeedPolling() {
-  if (State.salesFeedTimer) clearInterval(State.salesFeedTimer);
+  // 🚀 THE FIX 1: Change to clearTimeout to prevent ghost loops
+  if (State.salesFeedTimer) clearTimeout(State.salesFeedTimer);
 
   let knownSaleIds = new Set(
     (State.todaySales || []).map(function (l) {
@@ -957,19 +985,22 @@ function startSalesFeedPolling() {
 
   async function pollSalesData() {
     // Don't burn API calls if they minimized the tab
-    if (document.visibilityState === "hidden") return;
+    if (document.visibilityState === "hidden") {
+      // Still queue the next check so it resumes when they open the app!
+      State.salesFeedTimer = setTimeout(
+        pollSalesData,
+        Config.salesFeedInterval || 60000,
+      );
+      return;
+    }
 
     try {
-      // 🚀 1. Background Sync: Keep data fresh & Check Suspensions
       const leadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
       const userEmail = State.currentUser ? State.currentUser.email : null;
 
       const [updatedLeads, logData, suspensionExpiration] = await Promise.all([
         Graph.getLeads(leadsSyncDate, State.leads),
         Graph.getActivityLog(State.lastSyncDate, State.activityLog),
-
-        // 🛡️ THE FIX: Shielded Promise!
-        // If email is missing or the API blips, it safely returns null instead of crashing the sales feed.
         userEmail
           ? Graph.checkSuspensionStatus(userEmail).catch((err) => {
               console.warn("Suspension check skipped/failed this poll:", err);
@@ -981,45 +1012,38 @@ function startSalesFeedPolling() {
       // 🚨 THE BOUNCER: If suspended mid-session, kick them out!
       if (suspensionExpiration) {
         console.warn("Agent suspended mid-session! Locking app.");
-        if (State.salesFeedTimer) clearInterval(State.salesFeedTimer); // Kill the polling loop
-
         State.isSuspended = true;
         State.suspensionUntil = suspensionExpiration;
 
-        // 🚀 THE HARD LOCKOUT (Using your boot sequence logic)
         const mainContent = document.getElementById("main-content");
         const template = document.getElementById("tmpl-suspended");
         const sidebar = document.getElementById("sidebar");
 
-        // 1. Physically hide the navigation so they can't escape
         if (sidebar) sidebar.style.display = "none";
 
-        // 2. Expand the main content to fill the screen and inject the template
         if (mainContent && template) {
           mainContent.style.marginLeft = "0";
           mainContent.style.width = "100%";
           mainContent.innerHTML = "";
           mainContent.appendChild(template.content.cloneNode(true));
 
-          // 3. Start the visual countdown
           if (typeof startSuspensionCountdown === "function") {
             startSuspensionCountdown(suspensionExpiration);
           }
         }
 
-        return; // 🛑 Stop processing the rest of this function instantly
+        // 🛑 Stop processing and DO NOT queue another poll
+        return;
       }
 
-      // State is updated so the next time they click a tab, the data is current
+      // State is updated
       State.leads = updatedLeads;
       State.activityLog = logData.updatedLogs;
       State.lastSyncDate = logData.newSyncDate;
 
-      // 🚀 2. Process Sales
       const newSales = Graph.getTodaySales(State.activityLog);
       State.todaySales = newSales;
 
-      // 3. Confetti/Ticker logic (Global triggers)
       const newOnes = newSales.filter((l) => !knownSaleIds.has(l.id));
       if (newOnes.length > 0) {
         if (typeof Ticker !== "undefined" && Ticker.update) Ticker.update();
@@ -1027,17 +1051,21 @@ function startSalesFeedPolling() {
         newOnes.forEach((l) => knownSaleIds.add(l.id));
       }
 
-      // 🚀 4. EXCLUSIVE UI UPDATE: Only the Dashboard Feed
-      // This avoids the "UI jumping" on the Lead tables or Admin reports
       if (State.currentView === "dashboard") {
         updateDashboardUI(newSales);
       }
     } catch (e) {
       console.error("Sync polling error:", e);
     }
+
+    // 🚀 THE FIX 2: Queue the next poll ONLY after this one has fully resolved or failed!
+    // This prevents slow mobile connections from stacking memory into an iOS tab crash.
+    State.salesFeedTimer = setTimeout(
+      pollSalesData,
+      Config.salesFeedInterval || 60000,
+    );
   }
 
-  // UI update helper stays the same
   function updateDashboardUI(newSales) {
     const feed = document.getElementById("dash-sales-feed");
     const time = document.getElementById("sales-feed-time");
@@ -1072,11 +1100,8 @@ function startSalesFeedPolling() {
       .join("");
   }
 
+  // Kick off the first poll
   pollSalesData();
-  State.salesFeedTimer = setInterval(
-    pollSalesData,
-    Config.salesFeedInterval || 60000,
-  );
 }
 
 // ============================================================
@@ -2564,6 +2589,11 @@ function renderAssignLeads() {
         <input type="checkbox" id="bulk-unworked-check" style="cursor:pointer; width:15px; height:15px;"> Unworked Only
       </label>
 
+      <!-- 🚀 NEW: Worked At Least Once Checkbox -->
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#0D1B3E; cursor:pointer; margin-left:8px;">
+        <input type="checkbox" id="bulk-worked-check" style="cursor:pointer; width:15px; height:15px;"> Worked At Least Once
+      </label>
+
       <button id="assign-reset-filters" class="btn-ghost" style="padding: 6px; margin-left: auto;" title="Reset Filters">
         <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#64748B" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
       </button>
@@ -2615,7 +2645,8 @@ function renderAssignLeads() {
       
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Type</th><th>BTN</th><th>Status</th><th style="text-align: right;">Assign To</th></tr></thead>
+          <!-- 🚀 UPDATE: Changed Status to State in Table Header -->
+          <thead><tr><th>Name</th><th>Type</th><th>BTN</th><th>State</th><th style="text-align: right;">Assign To</th></tr></thead>
           <tbody id="assign-tbody"></tbody>
         </table>
       </div>
@@ -2626,6 +2657,7 @@ function renderAssignLeads() {
   let currentPage = 1;
   const itemsPerPage = 25;
   const unworkedCheck = document.getElementById("bulk-unworked-check");
+  const workedCheck = document.getElementById("bulk-worked-check"); // 🚀 The new pointer
   const typeSelect = document.getElementById("bulk-type-select");
   const stateSelect = document.getElementById("bulk-state-select");
   const batchSelect = document.getElementById("bulk-batch-select");
@@ -2691,16 +2723,25 @@ function renderAssignLeads() {
     const selectedBatch = batchSelect ? batchSelect.value : "all";
     const selectedSort = sortSelect ? sortSelect.value : "newest";
     const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
+    const requireWorked = workedCheck ? workedCheck.checked : false; // 🚀 Catching the new box
 
     const filteredLeads = unassigned.filter(function (l) {
+      // 🚀 The true metric of whether a lead has been worked
+      const hasBeenWorked = !!(
+        l.previousAgents && l.previousAgents.trim() !== ""
+      );
+
+      // 🚀 Mutually exclusive filters
+      if (requireUnworked && hasBeenWorked) return false;
+      if (requireWorked && !hasBeenWorked) return false;
+
       return (
         (selectedType === "all" ||
           (l.leadType &&
             l.leadType.toLowerCase() === selectedType.toLowerCase())) &&
         (selectedState === "all" ||
           (l.state && l.state.toUpperCase() === selectedState.toUpperCase())) &&
-        (selectedBatch === "all" || l._batchId === selectedBatch) &&
-        (!requireUnworked || (!l.previousAgents && !l.currentMRC))
+        (selectedBatch === "all" || l._batchId === selectedBatch)
       );
     });
 
@@ -2769,6 +2810,7 @@ function renderAssignLeads() {
               ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; cursor:help;">↺ ${prevArray.length} prev agents</span>`
               : "";
 
+          // 🚀 UPDATE: Rendering the State instead of the Status
           return `
         <tr>
           <td>
@@ -2778,10 +2820,11 @@ function renderAssignLeads() {
           </td>
           <td>${lead.leadType ? `<span class="lead-type-badge lead-type-${(lead.leadType || "").toLowerCase()}">${escHtml(lead.leadType)}</span>` : "—"}</td>
           <td class="td-mono">${escHtml(lead.BTN || lead.btn || lead.phone || "—")}</td>
-          <td><span class="status-badge status-${lead.status
-            .toLowerCase()
-            .replace(/\s+/g, "-")
-            .replace(/[^a-z0-9-]/g, "")}">${lead.status}</span></td>
+          <td>
+            <span style="background: rgba(13, 27, 62, 0.08); color: #0d1b3e; padding: 4px 8px; border-radius: 4px; font-weight: 700; font-size: 11px; letter-spacing: 0.5px;">
+              ${escHtml((lead.state || "—").toUpperCase())}
+            </span>
+          </td>
           <td>
             <div class="assign-select-row" style="display:flex; gap:6px; align-items:center; justify-content: flex-end;">
               <select class="filter-select assign-select" id="assign-${lead.id}">
@@ -2810,8 +2853,14 @@ function renderAssignLeads() {
     false,
   );
 
-  // 6. Attach Event Listeners
-  const triggers = [unworkedCheck, typeSelect, stateSelect, sortSelect];
+  // 6. Attach Event Listeners (Added workedCheck to the triggers)
+  const triggers = [
+    unworkedCheck,
+    workedCheck,
+    typeSelect,
+    stateSelect,
+    sortSelect,
+  ];
   triggers.forEach(
     (el) =>
       el &&
@@ -2829,25 +2878,17 @@ function renderAssignLeads() {
     agentSelect.addEventListener("change", (e) => {
       const selectedAgent = e.target.value;
 
-      // Hide badge if no agent is selected
       if (!selectedAgent) {
         readinessBadge.style.display = "none";
         return;
       }
 
-      // Calculate how many leads are TRULY workable right now
       const activeLeadsCount = State.leads.filter((lead) => {
-        // 1. Must be assigned to this specific agent
         if (lead.assignedTo !== selectedAgent) return false;
-
-        // 2. Must not be in a terminal status (Sold, Dead, etc.)
         if (Config.terminalStatuses.includes(lead.status || "New"))
           return false;
-
-        // 3. Must not be in the cool-off period
         if (Graph.isInCoolOff(lead)) return false;
 
-        // 🚀 4. THE FIX: Account for Callbacks AND Pending Order +1 Day install checks!
         if (lead.callbackAt) {
           const scheduledDate = new Date(lead.callbackAt);
           scheduledDate.setHours(0, 0, 0, 0);
@@ -2858,24 +2899,19 @@ function renderAssignLeads() {
           let waitingForDate = false;
 
           if (lead.status === "Pending Order") {
-            // For Pending Orders, we wait until the DAY AFTER the scheduled install date
             if (todayMidnight <= scheduledDate) waitingForDate = true;
           } else {
-            // For regular callbacks, we wait until the DAY OF the scheduled callback
             if (todayMidnight < scheduledDate) waitingForDate = true;
           }
 
-          // If we are still waiting for the action date, it is NOT blocking their queue right now!
           if (waitingForDate) {
             return false;
           }
         }
 
-        // If it passes all gates, it is an active, workable lead blocking their queue
         return true;
       }).length;
 
-      // Update the UI
       readinessBadge.style.display = "inline-flex";
 
       if (activeLeadsCount === 0) {
@@ -2905,6 +2941,7 @@ function renderAssignLeads() {
       if (stateSelect) stateSelect.value = "all";
       if (sortSelect) sortSelect.value = "newest";
       if (unworkedCheck) unworkedCheck.checked = false;
+      if (workedCheck) workedCheck.checked = false; // Reset the new box too
 
       currentPage = 1;
       updateDynamicDropdowns();
@@ -3048,6 +3085,10 @@ async function bulkAssignToSelectedAgent() {
   const unworkedCheck = document.getElementById("bulk-unworked-check");
   const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
 
+  // 🚀 GRAB THE NEW WORKED CHECKBOX WE ADDED EARLIER
+  const workedCheck = document.getElementById("bulk-worked-check");
+  const requireWorked = workedCheck ? workedCheck.checked : false;
+
   if (!agentName) {
     UI.showToast("Please select an agent first.", "warning");
     return;
@@ -3089,8 +3130,12 @@ async function bulkAssignToSelectedAgent() {
       selectedState === "all" ||
       (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
     const batchMatch = selectedBatch === "all" || l._batchId === selectedBatch;
-    const unworkedMatch =
-      !requireUnworked || (!l.previousAgents && !l.currentMRC);
+
+    // 🚀 Mutually exclusive Worked vs Unworked logic matching our table update
+    const hasPrevAgent = !!(l.previousAgents && l.previousAgents.trim() !== "");
+    let passesWorkFilter = true;
+    if (requireUnworked && hasPrevAgent) passesWorkFilter = false;
+    if (requireWorked && !hasPrevAgent) passesWorkFilter = false;
 
     // Make sure the selected agent hasn't worked this lead before
     const prevAgents = (l.previousAgents || "").toLowerCase();
@@ -3103,7 +3148,7 @@ async function bulkAssignToSelectedAgent() {
       typeMatch &&
       stateMatch &&
       batchMatch &&
-      unworkedMatch &&
+      passesWorkFilter &&
       agentMatch &&
       routingMatch
     );
@@ -3141,7 +3186,7 @@ async function bulkAssignToSelectedAgent() {
   // 5. Validation Checks
   if (validLeads.length === 0) {
     UI.showToast(
-      `${agentName} has no available eligible ${combinedLabel} left to work with these filters!`,
+      `${agentName} has no eligible ${combinedLabel} left to work with these filters!`,
       "warning",
     );
     return;
@@ -3149,7 +3194,7 @@ async function bulkAssignToSelectedAgent() {
 
   if (qty > validLeads.length) {
     UI.showToast(
-      `Only ${validLeads.length} eligible ${combinedLabel} available for ${agentName} (already worked or restricted by queue).`,
+      `Only ${validLeads.length} eligible ${combinedLabel} available for ${agentName} (others restricted by rules).`,
       "warning",
     );
     return;
@@ -3160,10 +3205,11 @@ async function bulkAssignToSelectedAgent() {
 
   setLoading(true);
   try {
+    // 🚀 RESTORED: Your original lightning-fast bulk engine!
     await Promise.all(
       leadsToAssign.map(async (lead) => {
         await Graph.updateLead(lead.id, { Agent_x0020_Assigned: agentName });
-        lead.assignedTo = agentName;
+        lead.assignedTo = agentName; // Instantly mutates local RAM
       }),
     );
 
@@ -3171,6 +3217,8 @@ async function bulkAssignToSelectedAgent() {
       `Successfully assigned ${qty} ${combinedLabel} to ${agentName}!`,
       "success",
     );
+
+    // 🚀 RESTORED: Redraws instantly using the updated RAM without triggering loadAllData()
     renderAssignLeads();
   } catch (err) {
     console.error("Bulk Assign Error:", err);
@@ -3185,7 +3233,7 @@ async function bulkAssignToSelectedAgent() {
 // ============================================================
 function renderCallBacks() {
   const mainContent = document.getElementById("main-content");
-  mainContent.innerHTML = ""; // Clear existing screen
+  mainContent.innerHTML = "";
 
   // 1. Setup Template
   const template = document.getElementById("tmpl-callbacks-page");
@@ -3244,53 +3292,41 @@ function renderCallBacks() {
   // 5. Handle the Empty State
   if (callbacks.length === 0) {
     wrap.innerHTML = `
-      <div class="animate-fade-up" style="padding: 60px 20px; text-align: center; color: #64748b;">
-        <div style="font-size: 40px; margin-bottom: 16px;">📅</div>
-        <h3 style="margin: 0 0 8px 0; color: #0a1a3f; font-size: 18px;">Pipeline Clear</h3>
-        <p style="margin: 0; font-size: 14px;">You have no upcoming callbacks or installations scheduled.</p>
+      <div class="card">
+        <div class="animate-fade-up cb-empty-state">
+          <div class="cb-empty-icon">📅</div>
+          <h3 class="cb-empty-title">Pipeline Clear</h3>
+          <p class="cb-empty-text">You have no upcoming callbacks or installations scheduled.</p>
+        </div>
       </div>
     `;
   } else {
-    // 6. Build the Table with Mobile-Responsive CSS injected
+    // 6. Build the Table using CSS Classes inside a Glass Card
+    // 🚀 THE FIX: The outer .card has NO animation so the glass renders instantly.
+    // The inner .table-wrap gets the animation to slide the data in cleanly!
     let html = `
-      <style>
-        .cb-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; }
-        .cb-table th, .cb-table td { padding: 14px 16px; }
-        .cb-date-full { display: inline-block; }
-        .cb-date-short { display: none; }
-        .cb-actions { display: flex; gap: 12px; justify-content: flex-end; }
-        
-        /* Mobile Breakpoint Modifications */
-        @media (max-width: 768px) {
-          .cb-table th, .cb-table td { padding: 12px 10px; }
-          .cb-table th { font-size: 10px !important; padding: 10px 8px; }
-          .cb-date-full { display: none; }
-          .cb-date-short { display: inline-block; }
-          
-          /* Stack the buttons and make them full width of the column */
-          .cb-actions { flex-direction: column; align-items: stretch; gap: 6px; }
-          .cb-actions button { width: 100%; justify-content: center; margin: 0 !important; }
-        }
-      </style>
-      
-      <div class="cb-table-wrap animate-fade-up">
-        <table class="cb-table" style="width: 100%; border-collapse: collapse; text-align: left;">
-          <thead>
-            <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 1px;">
-              <th style="font-weight: 600;">Scheduled For</th>
-              <th style="font-weight: 600;">Customer Info</th>
-              <th style="font-weight: 600;">Status</th>
-              <th style="font-weight: 600; text-align: right;">Action</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div class="card">
+        <div class="card-header animate-fade-up">
+          <h2 class="card-title">Scheduled Action Items</h2>
+          <span class="card-meta">${callbacks.length} pending</span>
+        </div>
+        <div class="table-wrap cb-table-wrap animate-fade-up" style="animation-delay: 0.1s;">
+          <table class="data-table cb-table">
+            <thead>
+              <tr>
+                <th>Scheduled For</th>
+                <th>Customer Info</th>
+                <th>Status</th>
+                <th class="cb-align-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
     `;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     callbacks.forEach((l, index) => {
-      // 1. Calculate the actual Action Date
       const actionDate = new Date(l.callbackAt);
       const isInstall = l.status === "Pending Order";
 
@@ -3301,22 +3337,17 @@ function renderCallBacks() {
       const actionMidnight = new Date(actionDate);
       actionMidnight.setHours(0, 0, 0, 0);
 
-      let dateColor = "#1e293b";
-      let dateWeight = "normal";
-      let badge = "";
+      let dateStatusClass = "cb-date-normal";
+      let badgeHtml = "";
 
-      // 2. Check the new action date against Today
       if (actionMidnight < today) {
-        dateColor = "var(--red, #ef4444)";
-        dateWeight = "bold";
-        badge = `<span style="background: #fee2e2; color: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; font-weight: bold; white-space: nowrap;">OVERDUE</span>`;
+        dateStatusClass = "cb-date-overdue";
+        badgeHtml = `<span class="cb-badge cb-badge-overdue">OVERDUE</span>`;
       } else if (actionMidnight.getTime() === today.getTime()) {
-        dateColor = "var(--blue, #2563B0)";
-        dateWeight = "bold";
-        badge = `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px; font-weight: bold; white-space: nowrap;">TODAY</span>`;
+        dateStatusClass = "cb-date-today";
+        badgeHtml = `<span class="cb-badge cb-badge-today">TODAY</span>`;
       }
 
-      // 3. Format strings for UI (Generating both Full and Short versions)
       const dateStrFull = actionDate.toLocaleDateString([], {
         weekday: "short",
         month: "short",
@@ -3325,7 +3356,7 @@ function renderCallBacks() {
       const dateStrShort = actionDate.toLocaleDateString([], {
         month: "numeric",
         day: "numeric",
-      }); // e.g., 7/15
+      });
 
       const timeStr = actionDate.toLocaleTimeString([], {
         hour: "numeric",
@@ -3347,33 +3378,33 @@ function renderCallBacks() {
         .replace(/[^a-z0-9-]/g, "")}`;
 
       html += `
-        <tr class="animate-row-fade" style="border-bottom: 1px solid #f1f5f9; transition: background 0.2s; animation-delay: ${index * 0.05 + 0.1}s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='white'">
+        <tr class="animate-row-fade lead-row" style="animation-delay: ${index * 0.05 + 0.2}s;">
           
-          <td style="font-size: 13px; color: ${dateColor}; font-weight: ${dateWeight};">
-            <div style="display: flex; align-items: center; flex-wrap: wrap; font-size: 14px; gap: 4px;">
+          <td class="${dateStatusClass}">
+            <div class="cb-date-primary">
               <span class="cb-date-full">${dateStrFull} @ ${timeStr}</span>
               <span class="cb-date-short">${dateStrShort} @ ${timeStr}</span>
-              ${badge}
+              ${badgeHtml}
             </div>
-            <div class="cb-date-full" style="font-size: 11px; color: #64748b; margin-top: 4px; font-weight: normal; text-transform: uppercase;">${typeStrFull}</div>
-            <div class="cb-date-short" style="font-size: 11px; color: #64748b; margin-top: 4px; font-weight: normal; text-transform: uppercase;">${typeStrShort}</div>
+            <div class="cb-date-full cb-type-sub">${typeStrFull}</div>
+            <div class="cb-date-short cb-type-sub">${typeStrShort}</div>
           </td>
           
           <td>
-            <div style="font-size: 14px; font-weight: 600; color: #0a1a3f;">${escHtml(l.name || "Unknown")}</div>
-            <div style="font-size: 12px; color: #64748b; margin-top: 2px; white-space: nowrap;">📞 ${escHtml(l.cbr || "No Phone Number")}</div>
+            <div class="cb-customer-name">${escHtml(l.name || "Unknown")}</div>
+            <div class="cb-customer-phone">📞 ${escHtml(l.cbr || "No Phone Number")}</div>
           </td>
           
           <td>
             <span class="status-badge ${statusCls}">${l.status}</span>
           </td>
           
-          <td style="padding: 16px; vertical-align: middle;">
+          <td class="cb-cell-actions">
             <div class="cb-actions">
-              <button class="btn-secondary" style="min-width: 90px; justify-content: center; letter-spacing: 1px;" onclick="viewCallbackLead('${l.id}')">
+              <button class="btn-secondary cb-action-btn" onclick="viewCallbackLead('${l.id}')">
                 View
               </button>
-              <button class="btn-primary" style="min-width: 90px; justify-content: center; letter-spacing: 1px;" onclick="workCallbackLead('${l.id}')">
+              <button class="btn-primary cb-action-btn" onclick="workCallbackLead('${l.id}')">
                 Work
               </button>
             </div>
@@ -3383,11 +3414,10 @@ function renderCallBacks() {
       `;
     });
 
-    html += `</tbody></table></div>`;
+    html += `</tbody></table></div></div>`;
     wrap.innerHTML = html;
   }
 
-  // 7. Return the fully built DOM element for your router to mount!
   mainContent.appendChild(clone);
 }
 
@@ -5393,49 +5423,297 @@ function exportReportCSV() {
 // ============================================================
 //  RAIMAK TEAM (Admin only)
 // ============================================================
-function renderContractors() {
+function renderContractors(searchTerm = "") {
   if (!isAdmin()) {
     navigate("myleads");
     return;
   }
-  const { contractors, leads } = State;
-  const max = Config.rules.maxLeadsPerAgent;
+
+  const { contractors, leads, activityLog } = State;
+  const query = searchTerm.toLowerCase().trim();
+
+  // 🚀 PERFORMANCE FIX & METRICS MAP
+  const metricsMap = {};
+  const agentResolver = {};
+
+  contractors.forEach((c) => {
+    const nameKey = (c.name || "").toLowerCase().trim();
+    const emailKey = (c.email || "").toLowerCase().trim();
+
+    metricsMap[nameKey] = {
+      activeLeads: 0,
+      totalSales: 0,
+      uniqueLeadsTouched: new Set(),
+      uniqueSalesSet: new Set(),
+      lastActionTime: 0, // ⏱️ NEW: Tracks their last pulse
+    };
+
+    if (nameKey) agentResolver[nameKey] = nameKey;
+    if (emailKey) agentResolver[emailKey] = nameKey;
+  });
+
+  leads.forEach((l) => {
+    const assigned = (l.assignedTo || "").toLowerCase().trim();
+    if (assigned && !Config.terminalStatuses.includes(l.status)) {
+      if (!metricsMap[assigned]) {
+        metricsMap[assigned] = {
+          activeLeads: 0,
+          totalSales: 0,
+          uniqueLeadsTouched: new Set(),
+          uniqueSalesSet: new Set(),
+          lastActionTime: 0,
+        };
+      }
+      metricsMap[assigned].activeLeads++;
+    }
+  });
+
+  (activityLog || []).forEach((log) => {
+    if (!log.action || !log.action.includes("Status:")) return;
+
+    const rawAgentInput = (log.agentEmail || log.agent || "")
+      .toLowerCase()
+      .trim();
+    if (!rawAgentInput) return;
+
+    let matchedKey = agentResolver[rawAgentInput];
+
+    if (!matchedKey) {
+      matchedKey = AgentDirectory.getName(rawAgentInput).toLowerCase().trim();
+      agentResolver[rawAgentInput] = matchedKey;
+
+      if (!metricsMap[matchedKey]) {
+        metricsMap[matchedKey] = {
+          activeLeads: 0,
+          totalSales: 0,
+          uniqueLeadsTouched: new Set(),
+          uniqueSalesSet: new Set(),
+          lastActionTime: 0,
+        };
+      }
+    }
+
+    // ⏱️ Record the pulse
+    const logTime = new Date(log.timestamp || 0).getTime();
+    if (logTime && logTime > metricsMap[matchedKey].lastActionTime) {
+      metricsMap[matchedKey].lastActionTime = logTime;
+    }
+
+    const trueLeadId = log.leadId || log.LeadId || log.LeadID;
+    const fallbackName = log.leadName || log.Title || "Unknown";
+    const uniqueKey = String(trueLeadId || fallbackName)
+      .toLowerCase()
+      .trim();
+
+    if (!uniqueKey || uniqueKey === "unknown") return;
+
+    metricsMap[matchedKey].uniqueLeadsTouched.add(uniqueKey);
+
+    if (log.action.includes("Sold") || log.action.includes("Sale")) {
+      if (!metricsMap[matchedKey].uniqueSalesSet.has(uniqueKey)) {
+        metricsMap[matchedKey].uniqueSalesSet.add(uniqueKey);
+        metricsMap[matchedKey].totalSales++;
+      }
+    }
+  });
+
+  const activeContractors = contractors.filter((c) => {
+    const hasEmail = c.email && c.email.trim() !== "";
+    const agentName = (c.name || "").toLowerCase().trim();
+    const metrics = metricsMap[agentName] || { activeLeads: 0 };
+    return hasEmail || metrics.activeLeads > 0;
+  });
+
+  const filteredContractors = activeContractors.filter((c) => {
+    if (!query) return true;
+    const name = (c.name || "").toLowerCase();
+    const email = (c.email || "").toLowerCase();
+    const role = (c.role || "").toLowerCase();
+    return (
+      name.includes(query) || email.includes(query) || role.includes(query)
+    );
+  });
+
+  filteredContractors.sort((a, b) =>
+    (a.name || "").localeCompare(b.name || ""),
+  );
+
   document.getElementById("main-content").innerHTML = `
-    <div class="view-header">
-      <h1 class="view-title">Raimak Team</h1>
-      <span class="view-subtitle">// ${contractors.length} agents</span>
+    <div class="view-header" style="margin-bottom: 20px;">
+      <div>
+        <h1 class="view-title">Raimak Team</h1>
+        <span class="view-subtitle">// ${filteredContractors.length} active agent${filteredContractors.length !== 1 ? "s" : ""}</span>
+      </div>
+      <div class="search-wrap" style="width: 280px;">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24">
+          <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </svg>
+        <input 
+          type="text" 
+          class="search-input" 
+          placeholder="Search team members..." 
+          value="${escHtml(searchTerm)}"
+          oninput="renderContractors(this.value)"
+          autofocus
+        />
+      </div>
     </div>
-    <div class="contractor-grid">
-      ${contractors
-        .map(function (c) {
-          const count = leads.filter(function (l) {
-            return (
-              l.assignedTo === c.name &&
-              !Config.terminalStatuses.includes(l.status)
-            );
-          }).length;
-          const pct = Math.min(100, Math.round((count / max) * 100));
-          const contacts = Graph.agentContactsToday(
-            c.email || c.name,
-            State.activityLog,
-          );
-          return `
-          <div class="contractor-card">
-            <div class="contractor-header">
-              <div class="contractor-avatar">${c.name[0].toUpperCase()}</div>
-              <div><div class="contractor-name">${escHtml(c.name)}</div><div class="contractor-role">${escHtml(c.role)}</div></div>
-              <span class="status-dot ${c.active ? "dot-active" : "dot-inactive"}"></span>
-            </div>
-            <div class="contractor-email">${escHtml(c.email || "No email")}</div>
-            <div class="load-label"><span>Lead Load</span><span class="${count >= max ? "text-danger" : ""}">${count}/${max}</span></div>
-            <div class="load-bar-wrap"><div class="load-bar ${pct >= 100 ? "load-full" : pct >= 80 ? "load-high" : ""}" style="width:${pct}%"></div></div>
-            <div class="load-label" style="margin-top:10px"><span>Contacts Today</span><span>${contacts}/${Config.rules.maxContactsPerDay}</span></div>
-            <div class="load-bar-wrap"><div class="load-bar ${contacts >= Config.rules.maxContactsPerDay ? "load-full" : ""}" style="width:${Math.min(100, Math.round((contacts / Config.rules.maxContactsPerDay) * 100))}%"></div></div>
-          </div>`;
-        })
-        .join("")}
+
+    <div class="contractor-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px;">
+      ${
+        filteredContractors.length > 0
+          ? filteredContractors
+              .map(function (c) {
+                const agentName = (c.name || "").toLowerCase().trim();
+                const cleanEmail = (c.email || "").toLowerCase().trim();
+                const metrics = metricsMap[agentName] || {
+                  activeLeads: 0,
+                  totalSales: 0,
+                  uniqueLeadsTouched: new Set(),
+                  lastActionTime: 0,
+                };
+
+                const touchesSize = metrics.uniqueLeadsTouched.size;
+                const closeRate =
+                  touchesSize > 0
+                    ? ((metrics.totalSales / touchesSize) * 100).toFixed(1) +
+                      "%"
+                    : "0%";
+
+                // ⏱️ Compute Time Since Last Action
+                let lastActionText = "No recent activity";
+                if (metrics.lastActionTime > 0) {
+                  const diffMins = Math.floor(
+                    (Date.now() - metrics.lastActionTime) / 60000,
+                  );
+                  if (diffMins < 1) lastActionText = "Last action: Just now";
+                  else if (diffMins < 60)
+                    lastActionText = `Last action: ${diffMins}m ago`;
+                  else if (diffMins < 1440) {
+                    const hrs = Math.floor(diffMins / 60);
+                    const mins = diffMins % 60;
+                    lastActionText = `Last action: ${hrs}h ${mins}m ago`;
+                  } else {
+                    lastActionText = `Last action: ${Math.floor(diffMins / 1440)}d ago`;
+                  }
+                }
+
+                // 🏷️ Queue Badges (Matches your routing rules!)
+                let queueBadge = "";
+                const uniList = (
+                  typeof Config !== "undefined" && Config.universalAgents
+                    ? Config.universalAgents
+                    : []
+                ).map((a) => a.toLowerCase().trim());
+                const scList = (
+                  typeof Config !== "undefined" && Config.salesCenterAgents
+                    ? Config.salesCenterAgents
+                    : []
+                ).map((a) => a.toLowerCase().trim());
+
+                if (
+                  uniList.includes(cleanEmail) ||
+                  uniList.includes(agentName)
+                ) {
+                  queueBadge = `<span style="font-size: 10px; background: #f3e8ff; color: #7e22ce; padding: 2px 6px; border-radius: 4px; font-weight: 700; border: 1px solid #e9d5ff;">★ ALL QUEUES</span>`;
+                } else if (
+                  scList.includes(cleanEmail) ||
+                  scList.includes(agentName)
+                ) {
+                  queueBadge = `<span style="font-size: 10px; background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-weight: 700; border: 1px solid #bae6fd;">🎧 SALES CENTER</span>`;
+                } else {
+                  queueBadge = `<span style="font-size: 10px; background: #dcfce7; color: #047857; padding: 2px 6px; border-radius: 4px; font-weight: 700; border: 1px solid #bbf7d0;">🚶 D2D FIELD</span>`;
+                }
+
+                return `
+                <div class="card contractor-card" style="padding: 20px; display: flex; flex-direction: column; gap: 14px;">
+                  <div class="contractor-header" style="display: flex; align-items: flex-start; gap: 12px;">
+                    <div class="contractor-avatar" style="width: 40px; height: 40px; border-radius: 50%; background: #2563b0; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px;">
+                      ${(c.name || "U")[0].toUpperCase()}
+                    </div>
+                    <div style="flex: 1; min-width: 0;">
+                      <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div class="contractor-name" style="font-weight: 700; color: #0d1b3e; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escHtml(c.name)}</div>
+                        <span class="status-dot ${c.active ? "dot-active" : "dot-inactive"}" title="${c.active ? "Active" : "Inactive"}"></span>
+                      </div>
+                      <div class="contractor-role" style="font-size: 11px; color: #64748b; font-family: var(--font-mono); margin-top: 2px;">
+                        ${lastActionText}
+                      </div>
+                      <div style="margin-top: 6px;">${queueBadge}</div>
+                    </div>
+                  </div>
+
+                  <!-- Key Metrics Grid -->
+                  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; text-align: center; margin-top: auto;">
+                    <div>
+                      <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Active</div>
+                      <div style="font-size: 16px; font-weight: 800; color: #0d1b3e; font-family: var(--font-mono);">${metrics.activeLeads}</div>
+                    </div>
+                    <div>
+                      <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Sales</div>
+                      <div style="font-size: 16px; font-weight: 800; color: #10b981; font-family: var(--font-mono);">${metrics.totalSales}</div>
+                    </div>
+                    <div>
+                      <div style="font-size: 10px; font-weight: 700; color: #64748b; text-transform: uppercase;">Close Rate</div>
+                      <div style="font-size: 16px; font-weight: 800; color: #8b5cf6; font-family: var(--font-mono);">${closeRate}</div>
+                    </div>
+                  </div>
+
+                  <!-- Quick Action Buttons -->
+                  <div style="display: flex; gap: 8px; margin-top: 2px;">
+                    <button class="btn-ghost" style="flex: 1; font-size: 12px; padding: 6px; justify-content: center; background: rgba(59, 130, 246, 0.05); color: #3b82f6;" onclick="viewAgentActivity('${escHtml(c.name)}')">
+                      Activity Log
+                    </button>
+                    <button class="btn-ghost" style="flex: 1; font-size: 12px; padding: 6px; justify-content: center; background: rgba(139, 92, 246, 0.05); color: #8b5cf6;" onclick="viewAgentStats('${escHtml(c.email || c.name)}')">
+                      View Stats
+                    </button>
+                  </div>
+
+                </div>`;
+              })
+              .join("")
+          : `<div class="card" style="grid-column: 1 / -1;"><div class="empty-state" style="padding: 40px; text-align: center;">No team members found matching "${escHtml(searchTerm)}"</div></div>`
+      }
     </div>`;
+
+  if (query) {
+    setTimeout(() => {
+      const input = document.querySelector(".search-input");
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }, 0);
+  }
 }
+
+// ==========================================
+// 🚀 QUICK ACTION HELPERS
+// ==========================================
+window.viewAgentActivity = function (agentName) {
+  navigate("activity");
+  setTimeout(() => {
+    const af = document.getElementById("filter-agent");
+    if (af && Array.from(af.options).some((opt) => opt.value === agentName)) {
+      af.value = agentName;
+      af.dispatchEvent(new Event("change"));
+    }
+  }, 50);
+};
+
+window.viewAgentStats = function (agentEmail) {
+  navigate("stats");
+  setTimeout(() => {
+    const ss = document.getElementById("stats-agent-select");
+    // The stats page normalizes agent emails to lowercase for matching
+    const targetVal = agentEmail.toLowerCase().trim();
+    if (ss && Array.from(ss.options).some((opt) => opt.value === targetVal)) {
+      ss.value = targetVal;
+      ss.dispatchEvent(new Event("change"));
+    }
+  }, 50);
+};
 
 // ============================================================
 //  ACTIVITY LOG (Admin only)
@@ -7225,7 +7503,7 @@ function updateBadges() {
     cbBadge.style.display = cbCount > 0 ? "inline-flex" : "none";
   }
 }
-
+/** 
 async function exportD2DLeads() {
   const groupA_Unassigned = [];
   const groupB_Assigned = [];
@@ -7359,7 +7637,7 @@ async function exportD2DLeads() {
   );
   await loadAllData();
 }
-
+*/
 function updateLeadDraft(leadId, fieldName, value) {
   // If this lead doesn't have a draft object yet, create one
   if (!State.drafts[leadId]) {

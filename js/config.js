@@ -70,7 +70,7 @@ const Config = {
   soldStatus: "Sold",
 
   // Lead types
-  leadTypes: ["OFS", "MLR", "Forced"],
+  leadTypes: ["OFS", "MLR", "D2D OFS", "D2D MLR"],
 
   // Current products options — alphabetical
   currentProducts: [
@@ -121,7 +121,6 @@ const Config = {
     "c.scarrett@raimak.com",
     "jennifer.smith@raimak.com",
     "a.cooper@raimak.com",
-    "a.gonzalez@raimak.com",
     "t.mathis@raimak.com",
     "t.henry@raimak.com",
     "S.balleste@raimak.com",
@@ -139,9 +138,7 @@ const Config = {
     "m.windle@raimak.com",
   ],
 
-  universalAgents: [
-    "j.redix@raimak.com", // Add their company email here!
-  ],
+  universalAgents: ["j.redix@raimak.com", "a.gonzalez@raimak.com"],
 
   scopes: ["Sites.ReadWrite.All", "User.Read"],
 
