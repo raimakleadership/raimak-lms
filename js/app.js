@@ -433,6 +433,9 @@ window.addEventListener("DOMContentLoaded", async function () {
       }
     }
     await loadAllData();
+    if (localStorage.getItem("raimak_perf_mode") === "true") {
+      document.body.classList.add("perf-mode");
+    }
     Points.updateHUD();
     renderDashboard();
     Ticker.update();
@@ -974,7 +977,6 @@ async function recycleAllLeads() {
 }
 
 function startSalesFeedPolling() {
-  // 🚀 THE FIX 1: Change to clearTimeout to prevent ghost loops
   if (State.salesFeedTimer) clearTimeout(State.salesFeedTimer);
 
   let knownSaleIds = new Set(
@@ -984,9 +986,7 @@ function startSalesFeedPolling() {
   );
 
   async function pollSalesData() {
-    // Don't burn API calls if they minimized the tab
     if (document.visibilityState === "hidden") {
-      // Still queue the next check so it resumes when they open the app!
       State.salesFeedTimer = setTimeout(
         pollSalesData,
         Config.salesFeedInterval || 60000,
@@ -995,7 +995,11 @@ function startSalesFeedPolling() {
     }
 
     try {
-      const leadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
+      // 🚀 THE IPHONE 7 FIX: The RAM "Amnesia" Backup
+      // If Safari rejects the physical storage save, we hold the sync date in memory.
+      const leadsSyncDate =
+        State.memoryLeadsSyncDate ||
+        localStorage.getItem("RaimakLeadsLastSyncDate");
       const userEmail = State.currentUser ? State.currentUser.email : null;
 
       const [updatedLeads, logData, suspensionExpiration] = await Promise.all([
@@ -1009,7 +1013,6 @@ function startSalesFeedPolling() {
           : Promise.resolve(null),
       ]);
 
-      // 🚨 THE BOUNCER: If suspended mid-session, kick them out!
       if (suspensionExpiration) {
         console.warn("Agent suspended mid-session! Locking app.");
         State.isSuspended = true;
@@ -1031,15 +1034,15 @@ function startSalesFeedPolling() {
             startSuspensionCountdown(suspensionExpiration);
           }
         }
-
-        // 🛑 Stop processing and DO NOT queue another poll
         return;
       }
 
-      // State is updated
       State.leads = updatedLeads;
       State.activityLog = logData.updatedLogs;
       State.lastSyncDate = logData.newSyncDate;
+
+      // 🚀 Lock in the RAM fallback for the next poll
+      State.memoryLeadsSyncDate = new Date().toISOString();
 
       const newSales = Graph.getTodaySales(State.activityLog);
       State.todaySales = newSales;
@@ -1058,8 +1061,6 @@ function startSalesFeedPolling() {
       console.error("Sync polling error:", e);
     }
 
-    // 🚀 THE FIX 2: Queue the next poll ONLY after this one has fully resolved or failed!
-    // This prevents slow mobile connections from stacking memory into an iOS tab crash.
     State.salesFeedTimer = setTimeout(
       pollSalesData,
       Config.salesFeedInterval || 60000,
@@ -7638,6 +7639,7 @@ async function exportD2DLeads() {
   await loadAllData();
 }
 */
+
 function updateLeadDraft(leadId, fieldName, value) {
   // If this lead doesn't have a draft object yet, create one
   if (!State.drafts[leadId]) {
@@ -7722,6 +7724,22 @@ function startSuspensionCountdown(expirationDate) {
     if (elMins) elMins.innerText = String(minutes).padStart(2, "0");
     if (elSecs) elSecs.innerText = String(seconds).padStart(2, "0");
   }, 1000);
+}
+
+// ==========================================
+// ⚡ PERFORMANCE MODE ENGINE
+// ==========================================
+function togglePerformanceMode() {
+  if (!document.body) return;
+  const isPerf = document.body.classList.toggle("perf-mode");
+  localStorage.setItem("raimak_perf_mode", isPerf ? "true" : "false");
+
+  if (typeof UI !== "undefined" && UI.showToast) {
+    UI.showToast(
+      isPerf ? "⚡ Performance Mode Enabled" : "✨ High Quality Mode Enabled",
+      "info",
+    );
+  }
 }
 
 const UI = {

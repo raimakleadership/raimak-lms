@@ -3600,3 +3600,60 @@ body {
     will-change: transform;
   }
 }
+
+/* =========================================
+   ⚡ PERFORMANCE MODE (LOW SPEC)
+   ========================================= */
+
+/* =========================================
+   ⚡ PERFORMANCE MODE TOGGLE
+   ========================================= */
+.perf-toggle-wrap {
+  padding: 0 16px 12px 16px; /* Matches standard sidebar padding */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* Optional: separates it from the footer */
+  margin-bottom: 12px;
+}
+
+.perf-toggle-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8ea5c8; /* Muted text color */
+  border-radius: 8px;
+  transition: all 0.2s ease-in-out;
+}
+
+.perf-toggle-btn:hover {
+  background: rgba(
+    250,
+    204,
+    21,
+    0.1
+  ); /* Subtle yellow/electric glow on hover */
+  color: #facc15;
+}
+body.perf-mode * {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  text-shadow: none !important;
+  transition: none !important;
+  animation: none !important;
+}
+
+/* FIXED: Light Theme Fallbacks */
+body.perf-mode .glass-card,
+body.perf-mode .feed-card,
+body.perf-mode .contractor-card {
+  /* 95% opaque white - highly readable, tiny bit of background bleed */
+  background: rgba(255, 255, 255, 0.95) !important;
+
+  /* Clean, subtle structural border instead of the neon blue */
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+}

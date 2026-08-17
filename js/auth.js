@@ -7,33 +7,53 @@ const Auth = (() => {
 
   // ── Init MSAL ──────────────────────────────────────────────
   async function init() {
-    msalInstance = new msal.PublicClientApplication({
-      auth: {
-        clientId: Config.azure.clientId,
-        authority: `https://login.microsoftonline.com/${Config.azure.tenantId}`,
-        redirectUri: Config.azure.redirectUri,
-      },
-      cache: {
-        cacheLocation: "localStorage",
-        storeAuthStateInCookie: true,
-      },
-    });
+    try {
+      msalInstance = new msal.PublicClientApplication({
+        auth: {
+          clientId: Config.azure.clientId,
+          authority: `https://login.microsoftonline.com/${Config.azure.tenantId}`,
+          redirectUri: Config.azure.redirectUri,
+        },
+        cache: {
+          cacheLocation: "localStorage",
+          storeAuthStateInCookie: true,
+        },
+      });
 
-    const result = await msalInstance.handleRedirectPromise();
-
-    // Set active account from redirect result for new users
-    if (result && result.account) {
-      currentAccount = result.account;
-      msalInstance.setActiveAccount(result.account);
-    } else {
-      const accounts = msalInstance.getAllAccounts();
-      if (accounts.length) {
-        currentAccount = accounts[0];
-        msalInstance.setActiveAccount(accounts[0]);
+      // 🚀 SAFETY: Future-proof for MSAL v3.x
+      if (typeof msalInstance.initialize === "function") {
+        await msalInstance.initialize();
       }
-    }
 
-    return result;
+      // 🚀 SAFETY: Catch redirect promise errors so the app doesn't crash
+      const result = await msalInstance.handleRedirectPromise();
+
+      // Set active account from redirect result for new users
+      if (result && result.account) {
+        currentAccount = result.account;
+        msalInstance.setActiveAccount(result.account);
+      } else {
+        const accounts = msalInstance.getAllAccounts();
+        if (accounts.length) {
+          currentAccount = accounts[0];
+          msalInstance.setActiveAccount(accounts[0]);
+        }
+      }
+
+      return result;
+    } catch (err) {
+      console.error("MSAL Initialization / Redirect Error:", err);
+
+      // 🚀 SAFETY: If MSAL crashes on return, wipe the corrupted token from the URL to stop the infinite loop
+      if (
+        window.location.hash.includes("code=") ||
+        window.location.hash.includes("error=")
+      ) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+
+      return null;
+    }
   }
 
   // ── Sign In ────────────────────────────────────────────────
@@ -42,7 +62,9 @@ const Auth = (() => {
       await msalInstance.loginRedirect({ scopes: Config.scopes });
     } catch (err) {
       console.error("Sign-in error:", err);
-      UI.showToast("Sign-in failed. Please try again.", "error");
+      if (typeof UI !== "undefined" && UI.showToast) {
+        UI.showToast("Sign-in failed. Please try again.", "error");
+      }
     }
   }
 
@@ -67,24 +89,22 @@ const Auth = (() => {
         account: currentAccount,
       });
 
-      // Token came back but is empty — force re-consent
+      // Token came back but is empty — fallback to standard redirect
       if (!result.accessToken || result.accessToken.trim() === "") {
-        await msalInstance.acquireTokenRedirect({
-          scopes: Config.scopes,
-          prompt: "consent", // forces the permissions consent screen
-        });
+        console.warn("Silent token empty. Redirecting for fresh token...");
+        await msalInstance.acquireTokenRedirect({ scopes: Config.scopes });
         return null;
       }
 
       return result.accessToken;
     } catch (err) {
       if (err instanceof msal.InteractionRequiredAuthError) {
-        await msalInstance.acquireTokenRedirect({
-          scopes: Config.scopes,
-          prompt: "consent", // forces the permissions consent screen
-        });
+        console.warn("Interaction required for token. Redirecting...");
+        // 🚀 SAFETY: Removed `prompt: "consent"` to prevent forcing the permission screen every hour
+        await msalInstance.acquireTokenRedirect({ scopes: Config.scopes });
         return null;
       }
+      console.error("Critical token acquisition failure:", err);
       throw err;
     }
   }
