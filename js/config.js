@@ -136,6 +136,7 @@ const Config = {
     "j.redix@raimak.com",
     "k.moats@raimak.com",
     "m.windle@raimak.com",
+    "i.turrubiartez@raimak.com",
   ],
 
   universalAgents: ["j.redix@raimak.com", "a.gonzalez@raimak.com"],

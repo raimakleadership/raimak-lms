@@ -478,6 +478,39 @@ async function loadAllData() {
     State.leads = Graph.applyBusinessRules(rawLeads, State.contractors);
 
     // 🚀 THE FIX Part 2: The Smart Activity Fetch
+
+    // 🍏 iOS 30-Day Rolling Window (Memory & Fetch Optimization)
+    const isIOS =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+    if (isIOS) {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - 30);
+      const cutoffISO = cutoffDate.toISOString();
+
+      // Force network fetch to be no older than 30 days
+      if (!State.lastSyncDate || new Date(State.lastSyncDate) < cutoffDate) {
+        State.lastSyncDate = cutoffISO;
+        console.log("[Perf] iOS detected: Adjusted fetch horizon to 30 days.");
+      }
+
+      // Purge existing local logs sitting in RAM right now
+      if (State.activityLog && State.activityLog.length > 0) {
+        const originalLength = State.activityLog.length;
+        State.activityLog = State.activityLog.filter((log) => {
+          const logDate = log.timestamp || log.Date || log.createdDateTime;
+          return logDate ? new Date(logDate) >= cutoffDate : true;
+        });
+
+        if (originalLength > State.activityLog.length) {
+          console.log(
+            `[Perf] iOS memory purged. Dropped ${originalLength - State.activityLog.length} old logs.`,
+          );
+        }
+      }
+    }
+
     // Now that the massive Leads download is finished, we safely ask for the Logs
     if (isAdmin()) {
       UI.showToast("Syncing historical admin logs...", "info");
@@ -993,7 +1026,7 @@ function startSalesFeedPolling() {
       );
       return;
     }
-
+    console.log("Polling sales data...");
     try {
       // 🚀 THE IPHONE 7 FIX: The RAM "Amnesia" Backup
       // If Safari rejects the physical storage save, we hold the sync date in memory.
@@ -1061,10 +1094,7 @@ function startSalesFeedPolling() {
       console.error("Sync polling error:", e);
     }
 
-    State.salesFeedTimer = setTimeout(
-      pollSalesData,
-      Config.salesFeedInterval || 60000,
-    );
+    State.salesFeedTimer = setTimeout(pollSalesData, Config.salesFeedInterval);
   }
 
   function updateDashboardUI(newSales) {
@@ -1101,8 +1131,10 @@ function startSalesFeedPolling() {
       .join("");
   }
 
-  // Kick off the first poll
-  pollSalesData();
+  State.salesFeedTimer = setTimeout(
+    pollSalesData,
+    Config.salesFeedInterval || 60000,
+  );
 }
 
 // ============================================================
