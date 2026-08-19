@@ -133,13 +133,16 @@ const Config = {
     "h.norris@raimak.com",
     "a.owens@raimak.com",
     "a.lewis@raimak.com",
-    "j.redix@raimak.com",
     "k.moats@raimak.com",
     "m.windle@raimak.com",
-    "i.turrubiartez@raimak.com",
   ],
 
-  universalAgents: ["j.redix@raimak.com", "a.gonzalez@raimak.com"],
+  universalAgents: [
+    "j.redix@raimak.com",
+    "a.gonzalez@raimak.com",
+    "i.turrubiartez@raimak.com",
+    "t.hughes@raimak.com",
+  ],
 
   scopes: ["Sites.ReadWrite.All", "User.Read"],
 
