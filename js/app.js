@@ -2916,17 +2916,25 @@ function renderAssignLeads() {
         return;
       }
 
-      const activeLeadsCount = State.leads.filter((lead) => {
-        if (lead.assignedTo !== selectedAgent) return false;
-        if (Config.terminalStatuses.includes(lead.status || "New"))
-          return false;
-        if (Graph.isInCoolOff(lead)) return false;
+      let unworkedCount = 0;
+      let callbackCount = 0;
+      let outOfHoursCount = 0;
 
+      const now = new Date();
+
+      State.leads.forEach((lead) => {
+        // 1. Base eligibility check
+        if (lead.assignedTo !== selectedAgent) return;
+        if (Config.terminalStatuses.includes(lead.status || "New")) return;
+        if (Graph.isInCoolOff(lead)) return;
+
+        // 2. Callback logic (ignore future scheduled dates)
+        let isDueCallback = false;
         if (lead.callbackAt) {
           const scheduledDate = new Date(lead.callbackAt);
           scheduledDate.setHours(0, 0, 0, 0);
 
-          const todayMidnight = new Date();
+          const todayMidnight = new Date(now);
           todayMidnight.setHours(0, 0, 0, 0);
 
           let waitingForDate = false;
@@ -2937,22 +2945,73 @@ function renderAssignLeads() {
             if (todayMidnight < scheduledDate) waitingForDate = true;
           }
 
-          if (waitingForDate) {
-            return false;
+          if (waitingForDate) return; // Future callback, doesn't count against current readiness
+          isDueCallback = true;
+        }
+
+        // 3. Timezone Logic (8 AM - 8 PM local time)
+        let isAwake = true;
+        if (lead.state) {
+          const stateKey = lead.state.toUpperCase().trim();
+          let tz = "America/New_York"; // Default fallback
+          if (
+            typeof stateTimezones !== "undefined" &&
+            stateTimezones[stateKey]
+          ) {
+            tz = stateTimezones[stateKey];
+          }
+
+          try {
+            const localHour = parseInt(
+              new Intl.DateTimeFormat("en-US", {
+                hour: "numeric",
+                hour12: false,
+                timeZone: tz,
+              }).format(now),
+              10,
+            );
+            isAwake = localHour >= 8 && localHour < 20;
+          } catch (err) {
+            console.warn("Timezone calculation failed for tz:", tz);
+            isAwake = true;
           }
         }
 
-        return true;
-      }).length;
+        // 4. Categorize the lead
+        if (!isAwake) {
+          outOfHoursCount++;
+        } else if (isDueCallback) {
+          callbackCount++;
+        } else {
+          unworkedCount++;
+        }
+      });
 
+      // 5. Build the UI Badge
       readinessBadge.style.display = "inline-flex";
 
-      if (activeLeadsCount === 0) {
-        readinessBadge.textContent = "🟢 Ready for Leads";
+      const workableActive = unworkedCount + callbackCount;
+
+      if (workableActive === 0) {
+        // Agent has zero dialable leads right now
+        readinessBadge.textContent =
+          outOfHoursCount > 0
+            ? `🟢 Ready for Leads (${outOfHoursCount} Out of Hours)`
+            : "🟢 Ready for Leads";
         readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
         readinessBadge.style.color = "#059669";
       } else {
-        readinessBadge.textContent = `🔴 Not Ready (${activeLeadsCount} Active)`;
+        // Agent is bogged down, build the detailed string
+        const details = [];
+        if (unworkedCount > 0) details.push(`${unworkedCount} Unworked`);
+        if (callbackCount > 0)
+          details.push(
+            `${callbackCount} Callback${callbackCount !== 1 ? "s" : ""}`,
+          );
+        if (outOfHoursCount > 0)
+          details.push(`${outOfHoursCount} Out of Hours`);
+
+        readinessBadge.textContent = `🔴 Not Ready (${details.join(", ")})`;
         readinessBadge.style.backgroundColor = "rgba(244, 63, 94, 0.15)";
         readinessBadge.style.color = "#E11D48";
       }
