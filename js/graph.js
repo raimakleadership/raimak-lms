@@ -1278,17 +1278,15 @@ const Graph = (() => {
       const flags = [];
 
       // 🚀 THE BOUNCER: Is an agent actually holding this lead?
-      // If it's unassigned (in the free pool), it cannot be "recycled".
       const isAssigned = !!(lead.assignedTo && lead.assignedTo.trim() !== "");
+
+      // 🚀 THE DRY FIX: One single source of truth for the entire app!
+      if (Graph.isInCoolOff(lead)) {
+        flags.push("cool_off");
+      }
 
       if (lead.lastContacted) {
         const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
-        if (
-          daysSince < coolOffDays &&
-          !Config.terminalStatuses.includes(lead.status)
-        ) {
-          flags.push("cool_off");
-        }
 
         // 🚀 TWEAK: Only flag 3rd Contacts for recycle if they are actively assigned
         if (
@@ -1301,15 +1299,13 @@ const Graph = (() => {
       }
 
       // 🚀 THE CLOCK FIX: Check 'lastTouchedOn' first!
-      // When a lead is assigned or worked, this updates, resetting the recycle countdown
-      // so new agents aren't instantly penalized for an old createdAt date.
       const ref = lead.LastTouchedOn || lead.lastContacted;
 
       if (
         ref &&
         !Config.terminalStatuses.includes(lead.status) &&
         lead.status !== "3rd Contact" &&
-        isAssigned // 🚀 TWEAK: Only run the general recycle clock if an agent is holding it
+        isAssigned
       ) {
         const daysSince = (now - new Date(ref)) / 86400000;
         if (daysSince > recycleAfterDays) flags.push("needs_recycle");
@@ -1461,7 +1457,9 @@ const Graph = (() => {
   }
 
   function isInCoolOff(lead) {
-    if (lead.status === "New") return false;
+    const currentStatus = (lead.status || "").trim().toLowerCase();
+
+    if (currentStatus === "new") return false;
 
     if (!lead.lastContacted) return false;
     const daysSince = (new Date() - new Date(lead.lastContacted)) / 86400000;
