@@ -1,4 +1,3 @@
-// Raimak LMS - App Logic v3.0
 window._isWorkingCallback = false;
 const cachedSkips = sessionStorage.getItem("_skippedSessionLeads");
 window._skippedSessionLeads = cachedSkips ? JSON.parse(cachedSkips) : [];
@@ -453,8 +452,7 @@ async function loadAllData() {
     // 1. Resolve IDs once
     await Graph.resolveSiteIds();
 
-    // 🚀 THE FIX Part 1: We pull the Activity Log OUT of the concurrent race.
-    // Leads are heavy, but Contractors and Points are tiny, so they can safely race together!
+    // 🚀 STEP 1: Concurrent Data Race for Lightweight/Essential Data
     const [rawLeads, contractors, pointsData] = await Promise.all([
       Graph.getLeads(savedLeadsSyncDate, State.leads).then((data) => {
         UI.showToast("✅ Leads synced!", "success");
@@ -470,85 +468,43 @@ async function loadAllData() {
       }),
     ]);
 
-    // 🚀 A-Z ROSTER SAFEGUARD: Always sort contractors alphabetically by display name
+    // 🚀 A-Z ROSTER SAFEGUARD
     State.contractors = (contractors || []).sort((a, b) =>
       (a.name || "").localeCompare(b.name || ""),
     );
 
     State.leads = Graph.applyBusinessRules(rawLeads, State.contractors);
 
-    // 🚀 THE FIX Part 2: The Smart Activity Fetch
-
-    // 🍏 iOS 30-Day Rolling Window (Memory & Fetch Optimization)
-    const isIOS =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-
-    if (isIOS) {
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - 30);
-      const cutoffISO = cutoffDate.toISOString();
-
-      // Force network fetch to be no older than 30 days
-      if (!State.lastSyncDate || new Date(State.lastSyncDate) < cutoffDate) {
-        State.lastSyncDate = cutoffISO;
-        console.log("[Perf] iOS detected: Adjusted fetch horizon to 30 days.");
-      }
-
-      // Purge existing local logs sitting in RAM right now
-      if (State.activityLog && State.activityLog.length > 0) {
-        const originalLength = State.activityLog.length;
-        State.activityLog = State.activityLog.filter((log) => {
-          const logDate = log.timestamp || log.Date || log.createdDateTime;
-          return logDate ? new Date(logDate) >= cutoffDate : true;
-        });
-
-        if (originalLength > State.activityLog.length) {
-          console.log(
-            `[Perf] iOS memory purged. Dropped ${originalLength - State.activityLog.length} old logs.`,
-          );
-        }
-      }
-    }
-
-    // Now that the massive Leads download is finished, we safely ask for the Logs
+    // 🚀 STEP 2: The Smart Activity Fetch
+    // (graph.js now perfectly handles the 30-day iOS Server Choke internally!)
     if (isAdmin()) {
       UI.showToast("Syncing historical admin logs...", "info");
-
-      // Admins use the hyper-fast Delta Sync to get the entire database
       const logData = await Graph.getActivityLog(
         State.lastSyncDate,
         State.activityLog,
       );
-
       State.activityLog = logData.updatedLogs;
       State.lastSyncDate = logData.newSyncDate;
-
       UI.showToast("✅ Admin logs synced!", "success");
     } else {
       UI.showToast("Syncing today's activity...", "info");
-
-      // Standard agents get their activity logs
       const logData = await Graph.getActivityLog(
         State.lastSyncDate,
         State.activityLog,
       );
-
       State.activityLog = logData.updatedLogs;
       State.lastSyncDate = logData.newSyncDate;
-
       UI.showToast("✅ Activity synced!", "success");
     }
 
-    // 🚀 THE BUG FIX: Extract today's logs for BOTH Admins and Agents!
-    // Previously this only ran inside if (isAdmin()), leaving regular agent sales feeds empty.
+    // 🚀 STEP 3: Extract today's logs for BOTH Admins and Agents
     const todayStr = new Date().toDateString();
     const todayLogs = (State.activityLog || []).filter(
       (log) =>
         log.timestamp && new Date(log.timestamp).toDateString() === todayStr,
     );
 
-    // 3. Instant, synchronous math!
+    // 🚀 STEP 4: Instant, synchronous math
     State.todaySales = Graph.getTodaySales(todayLogs);
   } catch (err) {
     UI.showToast("Failed to load data: " + err.message, "error");

@@ -811,7 +811,6 @@ const Graph = (() => {
     }
 
     // 🚀 STEP 3: GUARANTEED COLD BOOT TRIGGER
-    // Fires if IndexedDB has fewer than 1,000 entries OR user hasn't synced in >30 days
     const isColdBoot = existingLogs.length < 1000 || isStaleCache;
 
     const selectedFields =
@@ -824,11 +823,38 @@ const Graph = (() => {
       lists.activityLog +
       `/items?expand=fields($select=${selectedFields})&$select=id,createdDateTime&$top=5000`;
 
-    // Only apply delta filter if we are NOT cold booting
+    // ==========================================
+    // 🍏 🚀 THE IOS SERVER-SIDE CHOKE
+    // ==========================================
+    let applyFilterDate = null;
+
     if (!isColdBoot && lastSyncDate && typeof lastSyncDate === "string") {
-      const safeDate = lastSyncDate.split(".")[0] + "Z";
+      applyFilterDate = lastSyncDate;
+    }
+
+    const isIOS =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+    if (isIOS) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 30);
+
+      // If it's a cold boot OR the existing sync date is too old, force the 30-day cutoff
+      if (!applyFilterDate || new Date(applyFilterDate) < cutoff) {
+        applyFilterDate = cutoff.toISOString();
+        console.log(
+          "[Perf] iOS Server Choke Engaged: Forcing SharePoint to only send 30 days.",
+        );
+      }
+    }
+
+    // Apply the filter to the URL if a date was established
+    if (applyFilterDate) {
+      const safeDate = applyFilterDate.split(".")[0] + "Z";
       url += `&$filter=fields/Created gt '${safeDate}'`;
     }
+    // ==========================================
 
     // 🚀 STEP 4: Fetch with Streamed Progress Modal if Cold Booting
     let raw = [];
