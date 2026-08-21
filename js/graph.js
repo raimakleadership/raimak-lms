@@ -1280,6 +1280,9 @@ const Graph = (() => {
       // 🚀 THE BOUNCER: Is an agent actually holding this lead?
       const isAssigned = !!(lead.assignedTo && lead.assignedTo.trim() !== "");
 
+      // 🛡️ THE CALLBACK SHIELD: Does the lead have a scheduled follow-up?
+      const hasCallback = !!lead.callbackAt;
+
       // 🚀 THE DRY FIX: One single source of truth for the entire app!
       if (Graph.isInCoolOff(lead)) {
         flags.push("cool_off");
@@ -1288,11 +1291,12 @@ const Graph = (() => {
       if (lead.lastContacted) {
         const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
 
-        // 🚀 TWEAK: Only flag 3rd Contacts for recycle if they are actively assigned
+        // 🚀 TWEAK: Only flag 3rd Contacts for recycle if they are actively assigned AND have no callback
         if (
           lead.status === "3rd Contact" &&
           daysSince >= coolOffDays &&
-          isAssigned
+          isAssigned &&
+          !hasCallback
         ) {
           flags.push("needs_recycle");
         }
@@ -1305,7 +1309,8 @@ const Graph = (() => {
         ref &&
         !Config.terminalStatuses.includes(lead.status) &&
         lead.status !== "3rd Contact" &&
-        isAssigned
+        isAssigned &&
+        !hasCallback // 🛡️ SHIELD ACTIVE: Protect scheduled callbacks from the general recycle timer
       ) {
         const daysSince = (now - new Date(ref)) / 86400000;
         if (daysSince > recycleAfterDays) flags.push("needs_recycle");
@@ -1452,6 +1457,7 @@ const Graph = (() => {
       Status: targetStatus,
       Agent_x0020_Assigned: null,
       PreviousAgents: newPrev,
+      CallbackDateTime: null,
       LastTouchedOn: todayDate, // Resets the clock!
     });
   }
