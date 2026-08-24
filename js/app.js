@@ -2165,6 +2165,8 @@ async function agentSaveAll(leadId) {
     'input[name="feed-autopay"]:checked',
   );
   const autoPay = autoPayEl ? autoPayEl.value : "";
+  const soldByEl = document.getElementById("feed-sold-by");
+  const soldByName = soldByEl ? soldByEl.value : "";
   let rawCallbackDate =
     (document.getElementById("f-callback-date") || {}).value || "";
 
@@ -2175,7 +2177,7 @@ async function agentSaveAll(leadId) {
     return UI.showToast("Please update the lead status from 'New'.", "warning");
   }
 
-  // 📝 REQUIRED NOTE CHECK
+  // 📝 REQUIRED NOTE CHECK: Blocks saving if the textarea is empty or just spaces
   if (!newNote.trim()) {
     const notesEl = document.getElementById("feed-notes");
     if (notesEl) {
@@ -2184,6 +2186,7 @@ async function agentSaveAll(leadId) {
       notesEl.style.boxShadow = "0 0 8px rgba(239, 68, 68, 0.4)";
       notesEl.focus();
 
+      // Remove the red highlight after 2.5 seconds
       setTimeout(() => {
         notesEl.style.borderColor = "";
         notesEl.style.boxShadow = "";
@@ -2195,28 +2198,15 @@ async function agentSaveAll(leadId) {
     );
   }
 
-  // 🚀 THE UPGRADED FIX: Smart Sale Validation
-  // Strictly isolates the definition of a sale (excludes Pending Order)
-  const isSale =
-    newStatus ===
-    (typeof Config !== "undefined" && Config.soldStatus
-      ? Config.soldStatus
-      : "Sold");
-
-  if (isSale) {
-    // 1. Enforce billing data only if they are actively logging a sale
+  // Validation (Terminal Bypass)
+  const isTerminal = Config.terminalStatuses.includes(newStatus);
+  if (!isTerminal) {
     if (!autoPay) return UI.showToast("Select AutoPay", "error");
+    if (newStatus === Config.soldStatus && !soldByName)
+      return UI.showToast("Select Sold By", "error");
     if (!mrc) return UI.showToast("Enter MRC", "error");
     if (btn.replace(/\D/g, "").length !== 10)
-      return UI.showToast("Valid 10-digit BTN required", "error");
-  } else {
-    // 🛡️ THE FOOLPROOF TRAP: Prevent agents from accidentally saving sales as follow-ups
-    if (mrc && (!lead.currentMRC || lead.currentMRC !== mrc)) {
-      return UI.showToast(
-        "It looks like you're logging a sale! Please click the 'Sold' status button below.",
-        "warning",
-      );
-    }
+      return UI.showToast("Valid BTN required", "error");
   }
 
   // Note Stamping
@@ -2234,8 +2224,15 @@ async function agentSaveAll(leadId) {
     notes = notes ? stamped + "\n" + notes : stamped;
   }
 
-  // Activity Log Email Resolution (Simplified since Sold By is dead)
-  const activityEmail = (user && user.email) || "";
+  // Activity Log Email Resolution
+  const soldByContractor = soldByName
+    ? State.contractors.find((c) => c.name === soldByName)
+    : null;
+  const soldByEmail = soldByContractor
+    ? soldByContractor.email || soldByName
+    : (user && user.email) || "";
+  const activityEmail =
+    newStatus === Config.soldStatus ? soldByEmail : (user && user.email) || "";
 
   // 2. Setup Payload for SharePoint
   const todayDate = new Date().toISOString().split("T")[0];
@@ -2260,7 +2257,6 @@ async function agentSaveAll(leadId) {
   if (newStatus === "TDM") {
     saveFields["Agent_x0020_Assigned"] = null;
   }
-
   setLoading(true);
   try {
     const logEntry = {
@@ -2268,15 +2264,19 @@ async function agentSaveAll(leadId) {
       Title: lead.name || "Unknown Lead",
       ActionType: "Status: " + newStatus,
       AgentEmail: activityEmail,
-      Notes: notes,
+      Notes:
+        notes +
+        (newStatus === Config.soldStatus && soldByName
+          ? ` [Sold by ${soldByName}]`
+          : ""),
     };
 
-    // 🚀 THE RACE CONDITION FIX: Sequential Awaits
+    // 🚀 THE RACE CONDITION FIX: Sequential Awaits!
     // The Lead MUST update successfully in SharePoint before the Activity Log is written!
     await Graph.updateLead(leadId, saveFields);
     await Graph.logActivity(logEntry);
 
-    // LOCAL STATE: Optimistic UI Updates
+    // LOCAL STATE: Fixed leadName mapping
     State.activityLog.push({
       id: "local-" + Date.now(),
       leadId: leadId,
@@ -2288,7 +2288,7 @@ async function agentSaveAll(leadId) {
       timestamp: new Date().toISOString(),
     });
 
-    // 3. Update RAM
+    // 3. Update RAM (Optimistic UI)
     lead.status = newStatus;
     lead.notes = notes;
     if (mrc) lead.currentMRC = mrc;
@@ -2313,12 +2313,14 @@ async function agentSaveAll(leadId) {
     // Update Save Button
     const saveBtn = document.getElementById("feed-save-btn");
     if (saveBtn) {
+      // 1. Trigger the Success State
       saveBtn.textContent = "Saved ✓";
       saveBtn.disabled = true;
       saveBtn.style.background = "var(--green, #10b981)";
       saveBtn.style.borderColor = "var(--green, #10b981)";
       saveBtn.style.cursor = "default";
 
+      // 2. The 2-Second Cooldown & Reset
       setTimeout(() => {
         saveBtn.textContent = "Save";
         saveBtn.disabled = false;
