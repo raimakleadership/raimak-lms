@@ -4809,18 +4809,19 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   // ==========================================
   // 🛡️ 1. THE IN-MEMORY BOUNCER (Deduplication)
   // ==========================================
-  const generateKey = (first, last, address) => {
+  const generateKey = (name, address) => {
     const clean = (str) =>
       (str || "")
-        .replace(/[^\w\s]/gi, "")
-        .toLowerCase()
-        .trim();
-    return `${clean(first)}|${clean(last)}|${clean(address)}`;
+        .replace(/[^a-z0-9]/gi, "") // 🚀 THE UPGRADE: Annihilates all spaces, periods, and commas!
+        .toLowerCase();
+    return `${clean(name)}|${clean(address)}`;
   };
 
   const existingKeys = new Set();
   (State.leads || []).forEach((lead) => {
-    const key = generateKey(lead.firstName, lead.lastName, lead.address);
+    // 🚀 Stitching the explicit first/last names together to match CSV formatting
+    const fullName = `${lead.firstName || ""} ${lead.lastName || ""}`.trim();
+    const key = generateKey(fullName, lead.address);
     existingKeys.add(key);
   });
 
@@ -4828,8 +4829,10 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   let duplicateCount = 0;
 
   csvData.forEach((row) => {
-    const first = getCSVField(row, ["FirstName", "First Name", "First"]);
-    const last = getCSVField(row, ["LastName", "Last Name", "Last"]);
+    const first = getCSVField(row, ["FirstName", "First Name", "First"]) || "";
+    const last = getCSVField(row, ["LastName", "Last Name", "Last"]) || "";
+    const fullName = `${first} ${last}`.trim();
+
     let street = getCSVField(row, [
       "StreetAddress",
       "Street Address",
@@ -4842,12 +4845,14 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
       street = `${num} ${stName}`.trim();
     }
 
-    const key = generateKey(first, last, street);
+    // Generate the key using the combined full name
+    const key = generateKey(fullName, street);
+
     if (existingKeys.has(key)) {
       duplicateCount++;
     } else {
       validLeads.push(row);
-      existingKeys.add(key);
+      existingKeys.add(key); // Catches duplicates WITHIN the CSV itself!
     }
   });
 
@@ -4902,7 +4907,6 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
     }
 
     const batchRequests = chunk.map((row, index) => {
-      // 🚀 THE UPGRADE: All mapping rules applied dynamically here
       const mappedFields = mapCSVRowToSharePointFields(row, leadType);
 
       return {
