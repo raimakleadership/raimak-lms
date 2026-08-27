@@ -1,8 +1,10 @@
 window._isWorkingCallback = false;
-const cachedSkips = sessionStorage.getItem("_skippedSessionLeads");
-window._skippedSessionLeads = cachedSkips ? JSON.parse(cachedSkips) : [];
-const savedSyncDate = localStorage.getItem("RaimakActivityLastSyncDate");
-const savedLeadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
+const cachedSkips = sessionStorage.getItem("_skippedKineticSessionLeads");
+window._skippedKineticSessionLeads = cachedSkips ? JSON.parse(cachedSkips) : [];
+const savedSyncDate = localStorage.getItem("RaimakKineticActivityLastSyncDate");
+const savedLeadsSyncDate = localStorage.getItem(
+  "RaimakKineticLeadsLastSyncDate",
+);
 
 const State = {
   leads: [],
@@ -988,7 +990,7 @@ function startSalesFeedPolling() {
       // If Safari rejects the physical storage save, we hold the sync date in memory.
       const leadsSyncDate =
         State.memoryLeadsSyncDate ||
-        localStorage.getItem("RaimakLeadsLastSyncDate");
+        localStorage.getItem("RaimakKineticLeadsLastSyncDate");
       const userEmail = State.currentUser ? State.currentUser.email : null;
 
       const [updatedLeads, logData, suspensionExpiration] = await Promise.all([
@@ -1361,10 +1363,10 @@ function renderMyLeads() {
       // 2.5 🛑 3rd Contact Eviction
       if (l.status === "3rd Contact") return false;
 
-      // 3. Dismissed Leads
+      // 3. Dismissed Leads (Using the Kinetic key)
       if (
-        window._skippedSessionLeads &&
-        window._skippedSessionLeads.includes(l.id)
+        window._skippedKineticSessionLeads &&
+        window._skippedKineticSessionLeads.includes(l.id)
       ) {
         return false;
       }
@@ -1574,7 +1576,6 @@ function searchMyLeads(q) {
   const toggleEl = document.getElementById("toggle-search-all");
   const searchAll = toggleEl ? toggleEl.checked : true;
 
-  // Grab the current agent's identity (matching the logic from your render function)
   const agentName = (window._agentName || "")
     .toLowerCase()
     .replace(/\s+/g, " ");
@@ -1585,7 +1586,6 @@ function searchMyLeads(q) {
     .toLowerCase()
     .replace(/\s+/g, " ");
 
-  // THE FIX: Always search the master database so we catch cool-off and terminal leads!
   const filtered = (State.leads || []).filter((l) => {
     const assigned = (l.assignedTo || "")
       .toLowerCase()
@@ -1595,10 +1595,8 @@ function searchMyLeads(q) {
     let passesAssignmentFilter = false;
 
     if (searchAll) {
-      // Searching everything: just verify it's assigned to someone
       passesAssignmentFilter = assigned !== "";
     } else {
-      // Searching "My Leads": verify it belongs to THIS agent specifically
       passesAssignmentFilter =
         assigned &&
         (assigned === agentName ||
@@ -1606,24 +1604,21 @@ function searchMyLeads(q) {
           assigned === userEmail);
     }
 
+    // 🚀 THE KINETIC SEARCH ENGINE: Hunts specifically for BTN, CBR, and GAC
     const matchesSearch =
       (l.name && l.name.toLowerCase().includes(queryLower)) ||
-      (l.phone && l.phone.includes(queryLower)) ||
       (l.btn && l.btn.includes(queryLower)) ||
       (l.cbr && l.cbr.includes(queryLower)) ||
+      (l.gac && l.gac.includes(queryLower)) ||
       (l.address && l.address.toLowerCase().includes(queryLower));
 
     return passesAssignmentFilter && matchesSearch;
   });
 
   if (filtered.length) {
-    // THE QOL UPGRADE: Slice down to 25 max for instant rendering
     const displayLeads = filtered.slice(0, 25);
-
-    // Draw the table
     wrap.replaceChildren(renderLeadsTable(displayLeads, false, true));
 
-    // Add a helpful hint if we truncated the list
     if (filtered.length > 25) {
       const hint = document.createElement("div");
       hint.style.cssText =
@@ -1650,9 +1645,7 @@ function getMyContactsToday() {
   );
   if (contractor) myName = contractor.name.toLowerCase().trim();
 
-  // 1. Get today's local date (e.g., "4/18/2026")
   const todayString = new Date().toLocaleDateString();
-
   const uniqueLeads = new Set();
 
   logs.forEach((log) => {
@@ -1660,7 +1653,6 @@ function getMyContactsToday() {
     const actionStr = log.action || log.ActionType || "";
     const leadId = log.leadId || log.LeadID;
 
-    // 2. Convert the log's timestamp to a local date string and compare
     let isToday = false;
     if (log.timestamp) {
       isToday = new Date(log.timestamp).toLocaleDateString() === todayString;
@@ -1673,7 +1665,6 @@ function getMyContactsToday() {
       actionStr === "2nd Contact" ||
       actionStr === "3rd Contact";
 
-    // 3. The new requirement: It MUST happen today
     if (isMyLog && isContact && isToday && leadId) {
       uniqueLeads.add(leadId);
     }
@@ -1681,25 +1672,22 @@ function getMyContactsToday() {
 
   return uniqueLeads.size;
 }
+
 let _stagedStatus = null;
 
 function renderLeadFeedCard(myLeads) {
-  // 1. FIXED LOGIC: Grab the exact lead we are supposed to be looking at!
   let lead = myLeads[_currentFeedIndex];
-
   const isCoolOff = lead ? Graph.isInCoolOff(lead) : false;
 
   _stagedStatus = null;
   window._forceShowLead = false;
 
-  // 2. Setup Template
   const template = document.getElementById("tmpl-lead-feed-card");
   const clone = template.content.cloneNode(true);
 
   const emptyState = clone.getElementById("feed-card-empty");
   const activeState = clone.getElementById("feed-card-active");
 
-  // 3. Handle Empty State
   if (!lead) {
     emptyState.style.display = "flex";
     clone.getElementById("feed-empty-text").textContent =
@@ -1712,10 +1700,8 @@ function renderLeadFeedCard(myLeads) {
     return wrapper;
   }
 
-  // 4. Handle Active Lead State
   activeState.style.display = "block";
 
-  // Badges & Name
   const typeBadge = clone.getElementById("feed-lead-type");
   if (lead.leadType) {
     typeBadge.textContent = lead.leadType;
@@ -1733,16 +1719,12 @@ function renderLeadFeedCard(myLeads) {
 
   clone.getElementById("feed-lead-name").textContent = lead.name;
 
-  // Cooloff Alert
   if (isCoolOff) {
     const alert = clone.getElementById("feed-cooloff-alert");
     alert.style.display = "block";
     alert.textContent = `⏱ This lead is in the ${Config.rules.coolOffDays}-day cool-off period — you can still update it if the customer reached out.`;
   }
 
-  // ==========================================
-  // 1. THE CALLBACK / INSTALL ALERT BADGE
-  // ==========================================
   const callbackAlert = clone.getElementById("feed-callback-alert");
   if (callbackAlert && lead.callbackAt) {
     const targetDate = new Date(lead.callbackAt);
@@ -1769,24 +1751,22 @@ function renderLeadFeedCard(myLeads) {
     }
   }
 
-  // Meta Row (Icons)
+  // 🚀 KINETIC META ROW: Strips email/phone and injects split GAC/BTN/CBR
   let metaHtml = "";
-  if (lead.phone)
-    metaHtml += `<span class="feed-meta">📞 ${escHtml(lead.phone)}</span>`;
-  if (lead.email)
-    metaHtml += `<span class="feed-meta">✉️ ${escHtml(lead.email)}</span>`;
+  if (lead.btn)
+    metaHtml += `<span class="feed-meta">📱 BTN: ${escHtml(lead.btn)}</span>`;
+  if (lead.cbr)
+    metaHtml += `<span class="feed-meta">📞 CBR: ${escHtml(lead.cbr)}</span>`;
+  if (lead.gac)
+    metaHtml += `<span class="feed-meta">🔢 GAC: ${escHtml(lead.gac)}</span>`;
   if (lead.address)
     metaHtml += `<span class="feed-meta">📍 ${escHtml(lead.address)}${lead.city ? ", " + escHtml(lead.city) : ""}${lead.state ? " " + escHtml(lead.state) : ""}${lead.zip ? " " + escHtml(lead.zip) : ""}</span>`;
   clone.getElementById("feed-meta-container").innerHTML = metaHtml;
 
-  // Form Inputs
   clone.getElementById("feed-btn").value = lead.btn || "";
   clone.getElementById("feed-mrc").value = lead.currentMRC || "";
   clone.getElementById("feed-cbr").value = lead.cbr || "";
 
-  // ==========================================
-  // 2. PULLING THE SAVED CALLBACK DATE UI
-  // ==========================================
   const callbackInput = clone.getElementById("f-callback-date");
   const callbackWrap = clone.getElementById("callback-wrapper");
   const callbackBtn = clone.getElementById("btn-toggle-callback");
@@ -1870,7 +1850,6 @@ function renderLeadFeedCard(myLeads) {
     });
   }
 
-  // Products Dropdown
   const productsSelect = clone.getElementById("feed-products");
   Config.currentProducts.forEach((p) => {
     const option = document.createElement("option");
@@ -1880,7 +1859,6 @@ function renderLeadFeedCard(myLeads) {
     productsSelect.appendChild(option);
   });
 
-  // Sold By Dropdown
   const soldBySelect = clone.getElementById("feed-sold-by");
   State.contractors.forEach((c) => {
     const option = document.createElement("option");
@@ -1889,22 +1867,7 @@ function renderLeadFeedCard(myLeads) {
     soldBySelect.appendChild(option);
   });
 
-  // THE DRAFT PEEK
   const draft = State.drafts[lead.id] || {};
-  const activeAutoPay =
-    draft.autoPay !== undefined ? draft.autoPay : lead.autoPay;
-
-  // AutoPay Radios
-  const autoPayContainer = clone.getElementById("feed-autopay-container");
-  ["ACH - Debit Card", "ACH - Credit Card", "No Auto Pay"].forEach((opt) => {
-    const isChecked = activeAutoPay === opt ? "checked" : "";
-    autoPayContainer.innerHTML += `
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:#1A2640;background:#F4F7FD;border:1px solid #D0DCF0;padding:8px 14px;border-radius:6px;">
-        <input type="radio" name="feed-autopay" value="${opt}" ${isChecked} style="accent-color:#2563B0"> ${opt}
-      </label>`;
-  });
-
-  // Status Buttons
   const statusContainer = clone.getElementById("feed-status-buttons");
   const hiddenStatuses = ["New", "TD Non-Reg", "D2D Lead"];
 
@@ -1928,7 +1891,6 @@ function renderLeadFeedCard(myLeads) {
       year: "2-digit",
     });
 
-  // THE RESTORED LEGACY NOTES PARSER
   const pastNotesContainer = clone.getElementById("feed-past-notes-container");
   if (lead.notes && lead.notes.trim()) {
     pastNotesContainer.style.display = "block";
@@ -1962,10 +1924,9 @@ function renderLeadFeedCard(myLeads) {
     pastNotesContainer.innerHTML = notesHtml;
   }
 
-  // Save Button Action
   clone.getElementById("feed-save-btn").onclick = () => agentSaveAll(lead.id);
 
-  // THE DRAFT MEMORY ENABLER
+  // 🚀 KINETIC DRAFTS: Phone is removed
   const inputsToDraft = [
     { id: "feed-btn", key: "btn" },
     { id: "feed-mrc", key: "mrc" },
@@ -1988,16 +1949,6 @@ function renderLeadFeedCard(myLeads) {
     }
   });
 
-  const allAutoPayRadios = clone.querySelectorAll('input[name="feed-autopay"]');
-  if (allAutoPayRadios.length > 0) {
-    allAutoPayRadios.forEach((r) => {
-      r.addEventListener("change", (e) =>
-        updateLeadDraft(lead.id, "autoPay", e.target.value),
-      );
-    });
-  }
-
-  // Wrap and Return
   const wrapper = document.createElement("div");
   wrapper.appendChild(clone);
   return wrapper;
@@ -2161,10 +2112,7 @@ async function agentSaveAll(leadId) {
   const newNote = (document.getElementById("feed-notes") || {}).value || "";
   const cbr = (document.getElementById("feed-cbr") || {}).value || "";
   const btn = (document.getElementById("feed-btn") || {}).value || "";
-  const autoPayEl = document.querySelector(
-    'input[name="feed-autopay"]:checked',
-  );
-  const autoPay = autoPayEl ? autoPayEl.value : "";
+  const gac = (document.getElementById("feed-gac") || {}).value || "";
   let rawCallbackDate =
     (document.getElementById("f-callback-date") || {}).value || "";
 
@@ -2195,8 +2143,6 @@ async function agentSaveAll(leadId) {
     );
   }
 
-  // 🚀 THE UPGRADED FIX: Smart Sale Validation
-  // Strictly isolates the definition of a sale (excludes Pending Order)
   const isSale =
     newStatus ===
     (typeof Config !== "undefined" && Config.soldStatus
@@ -2205,7 +2151,6 @@ async function agentSaveAll(leadId) {
 
   if (isSale) {
     // 1. Enforce billing data only if they are actively logging a sale
-    if (!autoPay) return UI.showToast("Select AutoPay", "error");
     if (!mrc) return UI.showToast("Enter MRC", "error");
     if (btn.replace(/\D/g, "").length !== 10)
       return UI.showToast("Valid 10-digit BTN required", "error");
@@ -2234,7 +2179,6 @@ async function agentSaveAll(leadId) {
     notes = notes ? stamped + "\n" + notes : stamped;
   }
 
-  // Activity Log Email Resolution (Simplified since Sold By is dead)
   const activityEmail = (user && user.email) || "";
 
   // 2. Setup Payload for SharePoint
@@ -2249,7 +2193,7 @@ async function agentSaveAll(leadId) {
   if (products) saveFields["CurrentProducts"] = products;
   if (cbr) saveFields["CBR"] = cbr;
   if (btn) saveFields["BTN"] = btn;
-  if (autoPay) saveFields["AutoPay"] = autoPay;
+  if (gac) saveFields["GAC"] = gac;
 
   saveFields["CallbackDateTime"] = rawCallbackDate
     ? new Date(rawCallbackDate).toISOString()
@@ -2271,12 +2215,9 @@ async function agentSaveAll(leadId) {
       Notes: notes,
     };
 
-    // 🚀 THE RACE CONDITION FIX: Sequential Awaits
-    // The Lead MUST update successfully in SharePoint before the Activity Log is written!
     await Graph.updateLead(leadId, saveFields);
     await Graph.logActivity(logEntry);
 
-    // LOCAL STATE: Optimistic UI Updates
     State.activityLog.push({
       id: "local-" + Date.now(),
       leadId: leadId,
@@ -2295,7 +2236,7 @@ async function agentSaveAll(leadId) {
     if (products) lead.currentProducts = products;
     if (cbr) lead.cbr = cbr;
     if (btn) lead.btn = btn;
-    if (autoPay) lead.autoPay = autoPay;
+    if (gac) lead.gac = gac;
     lead.callbackAt = rawCallbackDate || null;
 
     Points.awardPoints(newStatus, leadId);
@@ -2306,11 +2247,9 @@ async function agentSaveAll(leadId) {
       UI.showToast("Saved!", "success");
     }
 
-    // UI State
     _stagedStatus = null;
     _leadSaved = true;
 
-    // Update Save Button
     const saveBtn = document.getElementById("feed-save-btn");
     if (saveBtn) {
       saveBtn.textContent = "Saved ✓";
@@ -2328,7 +2267,6 @@ async function agentSaveAll(leadId) {
       }, 2000);
     }
 
-    // Show Next Row
     const nextRow = document.getElementById("feed-next-row");
     if (nextRow) {
       nextRow.style.display = "block";
@@ -2426,14 +2364,15 @@ function advanceToNextLead() {
 
     if (currentLead.callbackAt) {
       // 1. Initialize the memory bank just in case
-      if (!window._skippedSessionLeads) window._skippedSessionLeads = [];
+      if (!window._skippedKineticSessionLeads)
+        window._skippedKineticSessionLeads = [];
 
       // 2. Prevent duplicates and memorize the dismiss
-      if (!window._skippedSessionLeads.includes(currentLead.id)) {
-        window._skippedSessionLeads.push(currentLead.id);
+      if (!window._skippedKineticSessionLeads.includes(currentLead.id)) {
+        window._skippedKineticSessionLeads.push(currentLead.id);
         sessionStorage.setItem(
-          "_skippedSessionLeads",
-          JSON.stringify(window._skippedSessionLeads),
+          "_skippedKineticSessionLeads",
+          JSON.stringify(window._skippedKineticSessionLeads),
         );
       }
       isDismissedCallback = true;
@@ -2632,7 +2571,6 @@ function renderAssignLeads() {
       
       <div class="table-wrap">
         <table class="data-table">
-          <!-- 🚀 UPDATE: Changed Status to State in Table Header -->
           <thead><tr><th>Name</th><th>Type</th><th>BTN</th><th>State</th><th style="text-align: right;">Assign To</th></tr></thead>
           <tbody id="assign-tbody"></tbody>
         </table>
@@ -2644,7 +2582,7 @@ function renderAssignLeads() {
   let currentPage = 1;
   const itemsPerPage = 25;
   const unworkedCheck = document.getElementById("bulk-unworked-check");
-  const workedCheck = document.getElementById("bulk-worked-check"); // 🚀 The new pointer
+  const workedCheck = document.getElementById("bulk-worked-check");
   const typeSelect = document.getElementById("bulk-type-select");
   const stateSelect = document.getElementById("bulk-state-select");
   const batchSelect = document.getElementById("bulk-batch-select");
@@ -2710,15 +2648,13 @@ function renderAssignLeads() {
     const selectedBatch = batchSelect ? batchSelect.value : "all";
     const selectedSort = sortSelect ? sortSelect.value : "newest";
     const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
-    const requireWorked = workedCheck ? workedCheck.checked : false; // 🚀 Catching the new box
+    const requireWorked = workedCheck ? workedCheck.checked : false;
 
     const filteredLeads = unassigned.filter(function (l) {
-      // 🚀 The true metric of whether a lead has been worked
       const hasBeenWorked = !!(
         l.previousAgents && l.previousAgents.trim() !== ""
       );
 
-      // 🚀 Mutually exclusive filters
       if (requireUnworked && hasBeenWorked) return false;
       if (requireWorked && !hasBeenWorked) return false;
 
@@ -2797,7 +2733,6 @@ function renderAssignLeads() {
               ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; cursor:help;">↺ ${prevArray.length} prev agents</span>`
               : "";
 
-          // 🚀 UPDATE: Rendering the State instead of the Status
           return `
         <tr>
           <td>
@@ -2840,7 +2775,6 @@ function renderAssignLeads() {
     false,
   );
 
-  // 6. Attach Event Listeners (Added workedCheck to the triggers)
   const triggers = [
     unworkedCheck,
     workedCheck,
@@ -2857,7 +2791,6 @@ function renderAssignLeads() {
       }),
   );
 
-  // 🚀 AGENT READINESS LISTENER
   const agentSelect = document.getElementById("bulk-agent-select");
   const readinessBadge = document.getElementById("agent-readiness-badge");
 
@@ -2877,12 +2810,10 @@ function renderAssignLeads() {
       const now = new Date();
 
       State.leads.forEach((lead) => {
-        // 1. Base eligibility check
         if (lead.assignedTo !== selectedAgent) return;
         if (Config.terminalStatuses.includes(lead.status || "New")) return;
         if (Graph.isInCoolOff(lead)) return;
 
-        // 2. Callback logic (ignore future scheduled dates)
         let isDueCallback = false;
         if (lead.callbackAt) {
           const scheduledDate = new Date(lead.callbackAt);
@@ -2899,15 +2830,14 @@ function renderAssignLeads() {
             if (todayMidnight < scheduledDate) waitingForDate = true;
           }
 
-          if (waitingForDate) return; // Future callback, doesn't count against current readiness
+          if (waitingForDate) return;
           isDueCallback = true;
         }
 
-        // 3. Timezone Logic (8 AM - 8 PM local time)
         let isAwake = true;
         if (lead.state) {
           const stateKey = lead.state.toUpperCase().trim();
-          let tz = "America/New_York"; // Default fallback
+          let tz = "America/New_York";
           if (
             typeof stateTimezones !== "undefined" &&
             stateTimezones[stateKey]
@@ -2931,7 +2861,6 @@ function renderAssignLeads() {
           }
         }
 
-        // 4. Categorize the lead
         if (!isAwake) {
           outOfHoursCount++;
         } else if (isDueCallback) {
@@ -2941,13 +2870,11 @@ function renderAssignLeads() {
         }
       });
 
-      // 5. Build the UI Badge
       readinessBadge.style.display = "inline-flex";
 
       const workableActive = unworkedCount + callbackCount;
 
       if (workableActive === 0) {
-        // Agent has zero dialable leads right now
         readinessBadge.textContent =
           outOfHoursCount > 0
             ? `🟢 Ready for Leads (${outOfHoursCount} Out of Hours)`
@@ -2955,7 +2882,6 @@ function renderAssignLeads() {
         readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
         readinessBadge.style.color = "#059669";
       } else {
-        // Agent is bogged down, build the detailed string
         const details = [];
         if (unworkedCount > 0) details.push(`${unworkedCount} Unworked`);
         if (callbackCount > 0)
@@ -2987,7 +2913,7 @@ function renderAssignLeads() {
       if (stateSelect) stateSelect.value = "all";
       if (sortSelect) sortSelect.value = "newest";
       if (unworkedCheck) unworkedCheck.checked = false;
-      if (workedCheck) workedCheck.checked = false; // Reset the new box too
+      if (workedCheck) workedCheck.checked = false;
 
       currentPage = 1;
       updateDynamicDropdowns();
@@ -3006,72 +2932,10 @@ function renderAssignLeads() {
     updateTableAndMath();
   });
 
-  // 7. Initial Draw
   updateDynamicDropdowns();
   updateTableAndMath();
 }
 
-/**
- * Helper: Checks if a lead type is reserved for D2D agents
- */
-function isD2DLeadType(leadType) {
-  const type = (leadType || "").trim().toUpperCase();
-  return type === "D2D TDM" || type === "D2D OFS";
-}
-
-/**
- * Helper: Checks if an agent belongs to the Sales Center roster
- * (Anyone NOT matching this list is automatically treated as D2D)
- */
-function canAgentWorkLeadType(agentIdentifier, leadType) {
-  if (!agentIdentifier) return false;
-  const target = String(agentIdentifier).trim().toLowerCase();
-
-  // Bulletproof helper: strips spaces on both sides and checks name + email
-  const isInList = (list) => {
-    if (!list || !Array.isArray(list)) return false;
-
-    // 1. Direct match against config items (with .trim() added!)
-    if (list.some((item) => String(item).trim().toLowerCase() === target)) {
-      return true;
-    }
-
-    // 2. Lookup contractor by Name OR Email in State.contractors
-    const contractor = (State.contractors || []).find((c) => {
-      const cName = c.name ? String(c.name).trim().toLowerCase() : "";
-      const cEmail = c.email ? String(c.email).trim().toLowerCase() : "";
-      return cName === target || cEmail === target;
-    });
-
-    if (contractor && contractor.email) {
-      const cleanContractorEmail = String(contractor.email)
-        .trim()
-        .toLowerCase();
-      return list.some(
-        (item) => String(item).trim().toLowerCase() === cleanContractorEmail,
-      );
-    }
-
-    return false;
-  };
-
-  // 1. VIP Universal Bypass
-  if (isInList(Config.universalAgents)) {
-    return true;
-  }
-
-  // 2. Identify the lead queue
-  const type = (leadType || "").trim().toUpperCase();
-  const isD2DLead = type === "D2D TDM" || type === "D2D OFS";
-
-  // 3. Check Sales Center Roster
-  const isSalesCenter = isInList(Config.salesCenterAgents);
-
-  // 🕵️ DEBUG LOG: Uncomment this line if an agent is still having trouble!
-  // console.log(`[Routing Check] Agent: "${target}" | Sales Center? ${isSalesCenter} | Target Type: "${type}"`);
-
-  return isSalesCenter ? !isD2DLead : isD2DLead;
-}
 async function assignLead(leadId) {
   const select = document.getElementById("assign-" + leadId);
   const agent = select && select.value;
@@ -3109,7 +2973,6 @@ async function assignLead(leadId) {
 }
 
 async function bulkAssignToSelectedAgent() {
-  // 1. Grab all WYSIWYG dropdown filters from the UI
   const agentSelect = document.getElementById("bulk-agent-select");
   const agentName = agentSelect ? agentSelect.value : "";
 
@@ -3131,7 +2994,6 @@ async function bulkAssignToSelectedAgent() {
   const unworkedCheck = document.getElementById("bulk-unworked-check");
   const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
 
-  // 🚀 GRAB THE NEW WORKED CHECKBOX WE ADDED EARLIER
   const workedCheck = document.getElementById("bulk-worked-check");
   const requireWorked = workedCheck ? workedCheck.checked : false;
 
@@ -3144,22 +3006,6 @@ async function bulkAssignToSelectedAgent() {
     return;
   }
 
-  // ==========================================
-  // 🛡️ EARLY ROUTING VALIDATION
-  // ==========================================
-  if (
-    selectedType !== "all" &&
-    !canAgentWorkLeadType(agentName, selectedType)
-  ) {
-    UI.showToast(
-      `🚫 Routing Error: ${agentName} is not authorized to work ${selectedType} leads based on queue rules.`,
-      "error",
-    );
-    return;
-  }
-  // ==========================================
-
-  // 2. Get the base unassigned pool
   const unassigned = State.leads.filter(function (l) {
     const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
     const isAvailable =
@@ -3167,7 +3013,6 @@ async function bulkAssignToSelectedAgent() {
     return isValidLead && isAvailable;
   });
 
-  // 3. Filter using WYSIWYG rules + Smart Routing Bouncer
   const validLeads = unassigned.filter(function (l) {
     const typeMatch =
       selectedType === "all" ||
@@ -3177,30 +3022,19 @@ async function bulkAssignToSelectedAgent() {
       (l.state && l.state.toUpperCase() === selectedState.toUpperCase());
     const batchMatch = selectedBatch === "all" || l._batchId === selectedBatch;
 
-    // 🚀 Mutually exclusive Worked vs Unworked logic matching our table update
     const hasPrevAgent = !!(l.previousAgents && l.previousAgents.trim() !== "");
     let passesWorkFilter = true;
     if (requireUnworked && hasPrevAgent) passesWorkFilter = false;
     if (requireWorked && !hasPrevAgent) passesWorkFilter = false;
 
-    // Make sure the selected agent hasn't worked this lead before
     const prevAgents = (l.previousAgents || "").toLowerCase();
     const agentMatch = !prevAgents.includes(agentName.toLowerCase());
 
-    // 🛡️ ONE-LINE ROUTING CHECK:
-    const routingMatch = canAgentWorkLeadType(agentName, l.leadType);
-
     return (
-      typeMatch &&
-      stateMatch &&
-      batchMatch &&
-      passesWorkFilter &&
-      agentMatch &&
-      routingMatch
+      typeMatch && stateMatch && batchMatch && passesWorkFilter && agentMatch
     );
   });
 
-  // 4. SORT USING THE EXACT SAME RULES AS THE TABLE PREVIEW 🚀
   validLeads.sort((a, b) => {
     const countA = a.previousAgents
       ? a.previousAgents.split(",").filter((x) => x.trim()).length
@@ -3224,12 +3058,10 @@ async function bulkAssignToSelectedAgent() {
     }
   });
 
-  // Dynamic labels for the Toast notification
   const stateLabel = selectedState === "all" ? "" : `${selectedState} `;
   const typeLabel = selectedType === "all" ? "leads" : `${selectedType} leads`;
   const combinedLabel = `${stateLabel}${typeLabel}`.trim();
 
-  // 5. Validation Checks
   if (validLeads.length === 0) {
     UI.showToast(
       `${agentName} has no eligible ${combinedLabel} left to work with these filters!`,
@@ -3240,22 +3072,20 @@ async function bulkAssignToSelectedAgent() {
 
   if (qty > validLeads.length) {
     UI.showToast(
-      `Only ${validLeads.length} eligible ${combinedLabel} available for ${agentName} (others restricted by rules).`,
+      `Only ${validLeads.length} eligible ${combinedLabel} available for ${agentName}.`,
       "warning",
     );
     return;
   }
 
-  // 6. Slice from the newly sorted top!
   const leadsToAssign = validLeads.slice(0, qty);
 
   setLoading(true);
   try {
-    // 🚀 RESTORED: Your original lightning-fast bulk engine!
     await Promise.all(
       leadsToAssign.map(async (lead) => {
         await Graph.updateLead(lead.id, { Agent_x0020_Assigned: agentName });
-        lead.assignedTo = agentName; // Instantly mutates local RAM
+        lead.assignedTo = agentName;
       }),
     );
 
@@ -3264,7 +3094,6 @@ async function bulkAssignToSelectedAgent() {
       "success",
     );
 
-    // 🚀 RESTORED: Redraws instantly using the updated RAM without triggering loadAllData()
     renderAssignLeads();
   } catch (err) {
     console.error("Bulk Assign Error:", err);
@@ -4701,105 +4530,50 @@ function getCSVField(row, candidates) {
  * Strictly uses internal SharePoint column names to prevent 400 Bad Request errors.
  */
 function mapCSVRowToSharePointFields(row, selectedLeadType) {
-  // 1. RESOLVE NAME & ADDRESS FIELDS
-  const firstName = getCSVField(row, ["FirstName", "First Name", "First"]);
-  const lastName = getCSVField(row, ["LastName", "Last Name", "Last"]);
+  // 1. NAME RESOLUTION
+  const firstName = getCSVField(row, ["First Name", "FirstName", "First"]);
+  const lastName = getCSVField(row, ["Last Name", "LastName", "Last"]);
+  const fullName = `${firstName} ${lastName}`.trim();
 
-  // Combine Number + Streetname if StreetAddress isn't already a full address
-  let street = getCSVField(row, [
-    "StreetAddress",
-    "Street Address",
-    "Address",
-    "WorkAddress",
-  ]);
-  if (!street) {
-    const num = getCSVField(row, ["Number", "House Number", "HouseNo"]);
-    const stName = getCSVField(row, ["Streetname", "Street Name", "Street"]);
-    street = `${num} ${stName}`.trim();
-  }
+  // 2. ADDRESS RESOLUTION
+  const address1 = getCSVField(row, ["Address 1", "Address1", "StreetAddress"]);
+  const address2 = getCSVField(row, ["Address 2", "Address2", "Apt"]);
+  const fullWorkAddress = address2
+    ? `${address1} ${address2}`.trim()
+    : address1;
 
-  // Combine Street + Street 2 (if present) into WorkAddress
-  const street2 = getCSVField(row, ["Street2", "Address2", "Apt", "Unit"]);
-  const fullWorkAddress = street2 ? `${street} ${street2}`.trim() : street;
-
-  const city = getCSVField(row, ["City", "WorkCity"]);
+  const city = getCSVField(row, ["City"]);
   const state = getCSVField(row, ["State"], "FL");
   const zip = getCSVField(row, ["Zip", "ZipCode", "PostalCode"]);
 
-  // 2. RESOLVE PRE-SCRUBBED NEW FIELDS
-  const btn = getCSVField(row, ["BTN", "Billing Phone", "Phone"]);
-  const cbr = getCSVField(row, ["CBR", "Contact Phone", "Callback Number"]);
-  const rawMRC = getCSVField(row, [
-    "MRC",
-    "Price",
-    "Cost",
-    "Monthly Price",
-    "MonthlyRecurringCharge",
-    "Monthly Charge",
-  ]);
-  const cleanMRC = rawMRC ? rawMRC.replace(/[^0-9.]/g, "") : "0";
-  const rawProducts = getCSVField(row, ["PRODUCTS", "Products", "Product"]);
+  // 3. KINETIC SPECIFIC FIELDS
+  const btn = getCSVField(row, ["Primary BTN", "BTN"]);
+  const cbr = getCSVField(row, ["CBR"]);
+  const gac = getCSVField(row, ["Global Account Number", "GAC"]);
+  const leadId = getCSVField(row, ["LeadID", "CMS ID"]);
+  const notesValue = getCSVField(row, ["Notes", "Note"]);
 
-  // 3. AUTO PAY LOGIC
-  let autoPayValue = "No Auto Pay";
-  const rawAutoPay = getCSVField(row, [
-    "AUTO PAY",
-    "AutoPay",
-    "AUTOPAY",
-    "Auto Pay",
-  ]).toUpperCase();
-
-  if (rawAutoPay === "ACH" || rawAutoPay.includes("ACH")) {
-    autoPayValue = "ACH - Debit Card";
-  } else if (
-    rawAutoPay === "CC" ||
-    rawAutoPay === "CREDIT" ||
-    rawAutoPay.includes("CC")
-  ) {
-    autoPayValue = "ACH - Credit Card";
-  } else if (
-    rawAutoPay === "N" ||
-    rawAutoPay === "NO" ||
-    rawAutoPay === "NONE"
-  ) {
-    autoPayValue = "No Auto Pay";
-  }
-
-  // 4. CURRENT PRODUCTS & NOTES BUSINESS RULES
-  let currentProductsValue = "";
-  if (selectedLeadType === "D2D TDM") {
-    currentProductsValue = "Phone";
-  }
-
-  // Save the pre-scrubbed products list as an introductory Note
-  let notesValue = "";
-  if (rawProducts) {
-    notesValue = `Pre-Scrubbed Products: ${rawProducts}`;
-  }
-
-  // 5. BUILD THE FINAL SHAREPOINT GRAPH PAYLOAD
-  // Strictly matches your SharePoint schema without introducing invalid standalone keys
+  // 4. BUILD THE FINAL SHAREPOINT GRAPH PAYLOAD
   return {
-    Title: `${firstName} ${lastName}`.trim() || "Unknown Lead",
+    Title: leadId || "Unknown_ID",
     FirstName: firstName,
     LastName: lastName,
-    WorkAddress: fullWorkAddress, // Combined Street + Street 2
+    WorkAddress: fullWorkAddress,
     WorkCity: city,
     State: state,
     Zip: zip,
 
-    // Core Lead Metadata (Using exact SharePoint internal names)
     Lead_x0020_Type: selectedLeadType,
     Agent_x0020_Assigned: "",
     Status: "New",
 
-    // New Pre-Scrubbed Fields
     BTN: btn,
     CBR: cbr,
-    MonthlyRecurringCharge_x0028_MRC: cleanMRC,
-    AutoPay: autoPayValue,
-    CurrentProducts: currentProductsValue,
+    GAC: gac,
     Notes: notesValue,
+
+    MonthlyRecurringCharge_x0028_MRC: "",
+    CurrentProducts: "",
   };
 }
 
@@ -4807,18 +4581,23 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   // ==========================================
   // 🛡️ 1. THE IN-MEMORY BOUNCER (Deduplication)
   // ==========================================
-  const generateKey = (first, last, address) => {
-    const clean = (str) =>
-      (str || "")
-        .replace(/[^\w\s]/gi, "")
-        .toLowerCase()
-        .trim();
-    return `${clean(first)}|${clean(last)}|${clean(address)}`;
+
+  // 🚀 KINETIC UPGRADE: We now deduplicate using the LeadID or Global Account Number!
+  const generateKey = (leadId, gac, address) => {
+    const clean = (str) => (str || "").toLowerCase().trim();
+
+    // If we have a LeadID or GAC, that's our ironclad identifier
+    if (leadId) return `LID_${clean(leadId)}`;
+    if (gac) return `GAC_${clean(gac)}`;
+
+    // Fallback just in case a row is missing both
+    return `ADDR_${clean(address)}`;
   };
 
   const existingKeys = new Set();
   (State.leads || []).forEach((lead) => {
-    const key = generateKey(lead.firstName, lead.lastName, lead.address);
+    // Check against the Kinetic identifiers mapped in graph.js
+    const key = generateKey(lead.kineticLeadId, lead.gac, lead.address);
     existingKeys.add(key);
   });
 
@@ -4826,21 +4605,16 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   let duplicateCount = 0;
 
   csvData.forEach((row) => {
-    const first = getCSVField(row, ["FirstName", "First Name", "First"]);
-    const last = getCSVField(row, ["LastName", "Last Name", "Last"]);
-    let street = getCSVField(row, [
+    const leadId = getCSVField(row, ["LeadID", "CMS ID"]);
+    const gac = getCSVField(row, ["Global Account Number", "GAC"]);
+    const address1 = getCSVField(row, [
+      "Address 1",
+      "Address1",
       "StreetAddress",
-      "Street Address",
-      "Address",
-      "WorkAddress",
     ]);
-    if (!street) {
-      const num = getCSVField(row, ["Number", "House Number", "HouseNo"]);
-      const stName = getCSVField(row, ["Streetname", "Street Name", "Street"]);
-      street = `${num} ${stName}`.trim();
-    }
 
-    const key = generateKey(first, last, street);
+    const key = generateKey(leadId, gac, address1);
+
     if (existingKeys.has(key)) {
       duplicateCount++;
     } else {
@@ -4900,7 +4674,6 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
     }
 
     const batchRequests = chunk.map((row, index) => {
-      // 🚀 THE UPGRADE: All mapping rules applied dynamically here
       const mappedFields = mapCSVRowToSharePointFields(row, leadType);
 
       return {

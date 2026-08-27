@@ -544,39 +544,35 @@ const Graph = (() => {
     const first = f.FirstName || f.First_x0020_Name || "";
     const last = f.LastName || f.Last_x0020_Name || "";
     const name = (first + " " + last).trim() || f.Title || f.LeadName || "";
+
     return {
-      id: item.id,
+      id: item.id, // The essential SharePoint Row ID
+      kineticLeadId: f.LeadID || "", // The Campaign's unique LeadID
       name: name,
       firstName: first,
       lastName: last,
       email: f.Email || f.EmailAddress || "",
-      phone: f.Phone || f.PhoneNumber || "",
+
+      // 🚀 The new Kinetic Identifiers!
+      cbr: f.CBR || "",
+      btn: f.BTN || "",
+      gac: f.GAC || "",
+
       status: f.Status || "New",
-      source: f.Campaign || f.LeadSource || f.Source || "",
-      assignedTo:
-        f.Agent_x0020_Assigned ||
-        f.AgentAssigned ||
-        f.AssignedTo ||
-        f.Agent ||
-        "",
+      assignedTo: f.Agent_x0020_Assigned || f.AgentAssigned || f.Agent || "",
       notes: f.Notes || "",
       address: f.WorkAddress || f.Address || "",
       city: f.WorkCity || f.City || "",
       state: f.State || "",
       zip: f.Zip || f.ZipCode || "",
-      cbr: f.CBR || "",
-      btn: f.BTN || "",
-      lockFlag: f.LockFlag || false,
+      eventsScheduled: f.Events_x0020_scheduled || "",
       callbackAt: f.CallbackDateTime || null,
       lastContacted: f.LastTouchedOn || f.LastContacted || null,
       createdAt: item.createdDateTime || f.Created || null,
       modified: item.lastModifiedDateTime || null,
-      leadType:
-        f.Lead_x0020_Type || f.Type || f.Item_x0020_Type || f.LeadType || "",
-      currentMRC:
-        f.MonthlyRecurringCharge_x0028_MRC || f.CurrentMRC || f.MRC || "",
+      leadType: f.Lead_x0020_Type || f.Type || "",
+      currentMRC: f.MonthlyRecurringCharge_x0028_MRC || f.CurrentMRC || "",
       currentProducts: f.CurrentProducts || "",
-      autoPay: f.AutoPay || "",
       previousAgents: f.PreviousAgents || "",
     };
   }
@@ -902,7 +898,10 @@ const Graph = (() => {
     if (validTimestamps.length > 0) {
       const maxTime = Math.max(...validTimestamps);
       newLastSyncDate = new Date(maxTime).toISOString();
-      localStorage.setItem("RaimakActivityLastSyncDate", newLastSyncDate);
+      localStorage.setItem(
+        "RaimakKineticActivityLastSyncDate",
+        newLastSyncDate,
+      );
     }
 
     if (lastSyncDate && isDeltaRefresh) {

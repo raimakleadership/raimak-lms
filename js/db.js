@@ -1,5 +1,5 @@
 const LocalDB = {
-  dbName: "RaimakDB",
+  dbName: "RaimakKineticDB",
   version: 1, // We can increment this later if we need to add more tables!
   db: null,
 

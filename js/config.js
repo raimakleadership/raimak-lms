@@ -14,9 +14,9 @@ const Config = {
       team: "TeamSite",
     },
     lists: {
-      activityLog: "2adb1260-e635-45cd-bb3b-87dd57a2d022",
+      activityLog: "032f2d9f-2528-47a5-9e9e-fbfce00683aa",
       contractorList: "bd5df38a-9cb6-411d-87e8-3e79934213d3",
-      leadsList: "5a01419d-e2c9-4aad-8484-6ed97233f305",
+      leadsList: "33198b95-bdfe-499d-b867-3f00b096a9a7",
       ordersAndInstalls: "9d5c9b0b-10d1-4b15-988c-051ef8117d40",
       productPerformance: "870acf73-e3fd-44b4-98cd-a49e9497fff1",
       agentPerformance: "93b94795-ae98-4134-9cbc-c92618856012",
@@ -49,20 +49,10 @@ const Config = {
     "Pending Order",
     "FNQ",
     "Already has Fiber",
-    "TDM",
-    "D2D Lead",
-    "TD Non-Reg",
   ],
 
   // Terminal statuses — removed from agent queue, admin only
-  terminalStatuses: [
-    "Do Not Call",
-    "Sold",
-    "FNQ",
-    "Already has Fiber",
-    "TDM",
-    "D2D Lead",
-  ],
+  terminalStatuses: ["Do Not Call", "Sold", "FNQ", "Already has Fiber", "TDM"],
 
   // TDM is kicked back to admin (D2D only)
   adminOnlyStatuses: ["TDM"],
@@ -70,20 +60,14 @@ const Config = {
   soldStatus: "Sold",
 
   // Lead types
-  leadTypes: ["OFS", "MLR", "D2D OFS", "D2D MLR"],
+  leadTypes: ["OFS", "MLR"],
 
   // Current products options — alphabetical
   currentProducts: [
-    "Home Phone + Internet + VAS",
     "Internet",
-    "Internet + Phone",
-    "Internet + TV",
-    "Internet + TV + Phone",
     "Internet + VAS",
-    "Other",
-    "Phone",
-    "TV",
-    "TV + Phone",
+    "Home Phone",
+    "Home Phone + VAS",
   ],
 
   leadSources: [
