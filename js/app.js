@@ -986,9 +986,7 @@ function startSalesFeedPolling() {
     try {
       // 🚀 THE IPHONE 7 FIX: The RAM "Amnesia" Backup
       // If Safari rejects the physical storage save, we hold the sync date in memory.
-      const leadsSyncDate =
-        State.memoryLeadsSyncDate ||
-        localStorage.getItem("RaimakLeadsLastSyncDate");
+      const leadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
       const userEmail = State.currentUser ? State.currentUser.email : null;
 
       const [updatedLeads, logData, suspensionExpiration] = await Promise.all([
@@ -1029,9 +1027,6 @@ function startSalesFeedPolling() {
       State.leads = updatedLeads;
       State.activityLog = logData.updatedLogs;
       State.lastSyncDate = logData.newSyncDate;
-
-      // 🚀 Lock in the RAM fallback for the next poll
-      State.memoryLeadsSyncDate = new Date().toISOString();
 
       const newSales = Graph.getTodaySales(State.activityLog);
       State.todaySales = newSales;
@@ -2297,6 +2292,7 @@ async function agentSaveAll(leadId) {
     if (btn) lead.btn = btn;
     if (autoPay) lead.autoPay = autoPay;
     lead.callbackAt = rawCallbackDate || null;
+    lead.lastContacted = new Date().toISOString();
 
     Points.awardPoints(newStatus, leadId);
 
