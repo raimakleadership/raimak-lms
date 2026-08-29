@@ -2135,8 +2135,9 @@ function stageStatus(leadId, newStatus) {
 
 async function agentSaveAll(leadId) {
   const user = State.currentUser;
-  window._sessionWorkedLeads = window._sessionWorkedLeads || new Map();
-  window._sessionWorkedLeads.set(leadId, Date.now());
+
+  // ❌ PREMATURE TIMEOUT REMOVED FROM HERE
+
   const lead = State.leads.find((l) => l.id === leadId);
   if (!lead) return;
 
@@ -2230,7 +2231,9 @@ async function agentSaveAll(leadId) {
     newStatus === Config.soldStatus ? soldByEmail : (user && user.email) || "";
 
   // 2. Setup Payload for SharePoint
-  const todayDate = new Date().toISOString().split("T")[0];
+  // 🚀 THE FIX: Removed .split("T")[0] to save exact timestamp and fix the rapid-aging bug!
+  const todayDate = new Date().toISOString();
+
   const saveFields = {
     Status: newStatus,
     LastTouchedOn: todayDate,
@@ -2252,6 +2255,7 @@ async function agentSaveAll(leadId) {
   if (newStatus === "TDM") {
     saveFields["Agent_x0020_Assigned"] = null;
   }
+
   setLoading(true);
   try {
     const logEntry = {
@@ -2270,6 +2274,10 @@ async function agentSaveAll(leadId) {
     // The Lead MUST update successfully in SharePoint before the Activity Log is written!
     await Graph.updateLead(leadId, saveFields);
     await Graph.logActivity(logEntry);
+
+    // 🚀 THE FIX: Only put the lead in timeout if SharePoint ACTUALLY accepted it!
+    window._sessionWorkedLeads = window._sessionWorkedLeads || new Map();
+    window._sessionWorkedLeads.set(leadId, Date.now());
 
     // LOCAL STATE: Fixed leadName mapping
     State.activityLog.push({
@@ -2292,6 +2300,8 @@ async function agentSaveAll(leadId) {
     if (btn) lead.btn = btn;
     if (autoPay) lead.autoPay = autoPay;
     lead.callbackAt = rawCallbackDate || null;
+
+    // 🚀 THE ZOMBIE KILLER: Update the local RAM clock!
     lead.lastContacted = new Date().toISOString();
 
     Points.awardPoints(newStatus, leadId);
