@@ -1,6 +1,15 @@
-window._isWorkingCallback = false;
+const todayStr = new Date().toDateString();
 const cachedSkips = sessionStorage.getItem("_skippedSessionLeads");
-window._skippedSessionLeads = cachedSkips ? JSON.parse(cachedSkips) : [];
+const cachedSkipDate = sessionStorage.getItem("_skippedSessionDate");
+
+// 🚀 If it is a brand new day, nuke the memory so they get a fresh queue!
+if (cachedSkipDate !== todayStr) {
+  sessionStorage.removeItem("_skippedSessionLeads");
+  sessionStorage.setItem("_skippedSessionDate", todayStr);
+  window._skippedSessionLeads = [];
+} else {
+  window._skippedSessionLeads = cachedSkips ? JSON.parse(cachedSkips) : [];
+}
 const savedSyncDate = localStorage.getItem("RaimakActivityLastSyncDate");
 const savedLeadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
 
@@ -447,6 +456,10 @@ window.addEventListener("DOMContentLoaded", async function () {
 async function loadAllData() {
   setLoading(true);
   UI.showToast("Syncing floor data...", "info");
+
+  // 🚀 THE REFRESH RESURRECT: Bring back their skipped callbacks on a fresh sync!
+  window._skippedSessionLeads = [];
+  sessionStorage.removeItem("_skippedSessionLeads");
 
   try {
     // 1. Resolve IDs once
@@ -2133,17 +2146,306 @@ function stageStatus(leadId, newStatus) {
   }
 }
 
-async function agentSaveAll(leadId) {
-  const user = State.currentUser;
+function openDpiVerificationModal(leadId, uiData) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "dpi-overlay";
 
-  // ❌ PREMATURE TIMEOUT REMOVED FROM HERE
+  const modal = document.createElement("div");
+  modal.className = "modal";
+  modal.style.animation = "fadeUp 0.2s ease both";
+  modal.style.maxWidth = "420px"; // Keeps it tight and focused
+
+  modal.innerHTML = `
+    <div class="modal-header">
+      <h2 style="display:flex; align-items:center; gap:8px; color: var(--cyan) !important;">
+        ✅ Order Verification
+      </h2>
+      <button id="dpi-close" style="background:none; border:none; font-size:24px; cursor:pointer; color:#94a3b8; line-height:1; padding:0; margin:0; transition: color 0.2s;">&times;</button>
+    </div>
+
+    <div class="modal-form">
+      <div class="form-group" style="text-align: center; margin-bottom: 8px;">
+        <label style="font-size:13px;">DPI Order # <span style="color: var(--red);">*</span></label>
+        <input type="text" id="dpi-input" class="form-input" placeholder="8-Digit Number" maxlength="8" style="font-family:var(--font-mono); font-size:22px; font-weight:bold; letter-spacing: 4px; text-align: center; padding: 16px; margin-top: 8px;">
+      </div>
+    </div>
+
+    <div class="modal-footer" style="justify-content: space-between; flex-wrap: wrap;">
+      <button id="dpi-memo-btn" class="btn-ghost" style="color: var(--cyan); border-color: rgba(0, 212, 255, 0.3);">
+        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+        Open Memo Generator
+      </button>
+      
+      <div style="display: flex; gap: 8px;">
+        <button id="dpi-cancel" class="btn-ghost">Cancel</button>
+        <button id="dpi-confirm" class="btn-primary">Finalize Sale</button>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const dpiInput = document.getElementById("dpi-input");
+  const confirmBtn = document.getElementById("dpi-confirm");
+
+  // Real-time validation glow
+  dpiInput.addEventListener("input", (e) => {
+    if (/^\d{8}$/.test(e.target.value.trim())) {
+      e.target.style.borderColor = "var(--green)";
+      e.target.style.boxShadow = "0 0 12px var(--green-glow)";
+    } else {
+      e.target.style.borderColor = "var(--border)";
+      e.target.style.boxShadow = "none";
+    }
+  });
+
+  // Basic closes
+  const closeIt = () => overlay.remove();
+  document.getElementById("dpi-close").onclick = closeIt;
+  document.getElementById("dpi-cancel").onclick = closeIt;
+
+  // ROUTE A: Finalize directly without a memo
+  confirmBtn.onclick = () => {
+    const dpi = dpiInput.value.trim();
+    if (!/^\d{8}$/.test(dpi)) {
+      dpiInput.style.borderColor = "var(--red)";
+      dpiInput.style.boxShadow = "0 0 12px var(--red-dim)";
+      UI.showToast("Please enter a valid 8-digit DPI Order Number.", "error");
+      return;
+    }
+
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = "Processing...";
+
+    setTimeout(() => {
+      overlay.remove();
+      // Notice memoText is explicitly null here!
+      agentSaveAll(leadId, true, { dpi, memoText: null });
+    }, 300);
+  };
+
+  // ROUTE B: Pivot to the Memo Generator
+  document.getElementById("dpi-memo-btn").onclick = () => {
+    const currentDpi = dpiInput.value.trim();
+    overlay.remove();
+    // Pass whatever they already typed into the next modal
+    uiData.prefilledDpi = currentDpi;
+    openSaleVerificationModal(leadId, uiData);
+  };
+}
+
+function openSaleVerificationModal(leadId, uiData) {
+  const lead = State.leads.find((l) => l.id === leadId);
+  if (!lead) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "csvm-overlay";
+
+  const modal = document.createElement("div");
+  modal.className = "modal";
+  modal.style.animation = "fadeUp 0.3s ease both";
+
+  modal.innerHTML = `
+    <div class="modal-header">
+      <h2 style="display:flex; align-items:center; gap:8px; color: var(--green) !important;">
+        🎉 Sale Verification & Memo
+      </h2>
+      <button id="csvm-close" style="background:none; border:none; font-size:24px; cursor:pointer; color:#94a3b8; line-height:1; padding:0; margin:0; transition: color 0.2s;">&times;</button>
+    </div>
+
+    <div class="modal-form" style="display:flex; flex-direction:column; gap:16px;">
+      
+      <!-- Top Row: DPI and New MRC -->
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+        <div class="form-group">
+          <label>DPI Order # <span style="color: var(--red);">*</span></label>
+          <input type="text" id="csvm-dpi" class="form-input" placeholder="8-Digit Number" maxlength="8" style="font-family:var(--font-mono); font-size:15px; font-weight:bold; letter-spacing: 2px;">
+        </div>
+        <div class="form-group">
+          <label>New MRC</label>
+          <input type="text" id="csvm-mrc" class="form-input" value="${escHtml(uiData.mrc)}" placeholder="e.g. 44.99">
+        </div>
+      </div>
+
+      <!-- Package & VOIP -->
+      <div style="display:grid; grid-template-columns: 1fr auto; gap:16px; align-items: end;">
+        <div class="form-group">
+          <label>Package</label>
+          <select id="csvm-package" class="form-input">
+            <option value="Fiber 200">Fiber 200</option>
+            <option value="Fiber 500">Fiber 500</option>
+            <option value="Fiber 1 Gig">Fiber 1 Gig</option>
+            <option value="Fiber 2 Gig">Fiber 2 Gig</option>
+            <option value="Fiber 5 Gig">Fiber 5 Gig</option>
+            <option value="Fiber 7 Gig">Fiber 7 Gig</option>
+          </select>
+        </div>
+        <div class="form-group" style="padding-bottom: 10px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size: 13px; color: #f8fafc !important; text-transform: none; letter-spacing: 0.5px;">
+            <input type="checkbox" id="csvm-voip" style="width:16px; height:16px; accent-color: var(--cyan);">
+            Include VOIP
+          </label>
+        </div>
+      </div>
+
+      <!-- Extras Checkboxes -->
+      <div class="form-group">
+        <label>Extras</label>
+        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-top:4px; padding: 12px 16px; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px;">
+           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; color: #cbd5e1 !important; font-size:13px; text-transform:none; letter-spacing:0;"><input type="checkbox" value="Wifi Sec" class="csvm-extra-cb" style="accent-color: var(--cyan);"> Wifi Sec</label>
+           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; color: #cbd5e1 !important; font-size:13px; text-transform:none; letter-spacing:0;"><input type="checkbox" value="Wifi Sec+" class="csvm-extra-cb" style="accent-color: var(--cyan);"> Wifi Sec+</label>
+           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; color: #cbd5e1 !important; font-size:13px; text-transform:none; letter-spacing:0;"><input type="checkbox" value="WHW" class="csvm-extra-cb" style="accent-color: var(--cyan);"> WHW</label>
+           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; color: #cbd5e1 !important; font-size:13px; text-transform:none; letter-spacing:0;"><input type="checkbox" value="Unbreakable" class="csvm-extra-cb" style="accent-color: var(--cyan);"> Unbreakable</label>
+           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; color: #cbd5e1 !important; font-size:13px; text-transform:none; letter-spacing:0;"><input type="checkbox" value="MPTP" class="csvm-extra-cb" style="accent-color: var(--cyan);"> MPTP</label>
+           <label style="display:flex; align-items:center; gap:6px; cursor:pointer; color: #cbd5e1 !important; font-size:13px; text-transform:none; letter-spacing:0;"><input type="checkbox" value="TS" class="csvm-extra-cb" style="accent-color: var(--cyan);"> TS</label>
+        </div>
+      </div>
+
+      <!-- Live Preview -->
+      <div class="form-group" style="margin-top: 8px;">
+        <label>Generated Memo Preview</label>
+        <textarea id="csvm-preview" readonly class="form-input" style="height:190px; font-family:var(--font-mono); font-size:12px; background: rgba(0, 0, 0, 0.4); color: var(--green); border-color: rgba(255, 255, 255, 0.1); resize:none; line-height:1.5; box-shadow: inset 0 4px 6px rgba(0,0,0,0.3); outline: none;"></textarea>
+      </div>
+
+    </div>
+
+    <div class="modal-footer">
+      <button id="csvm-cancel" class="btn-ghost">Go Back</button>
+      <button id="csvm-confirm" class="btn-primary" style="background: linear-gradient(135deg, var(--green), #059669); border: none; box-shadow: 0 4px 15px var(--green-glow);">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
+        Copy Memo & Finalize Sale
+      </button>
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const dpiEl = document.getElementById("csvm-dpi");
+  const mrcEl = document.getElementById("csvm-mrc");
+  const pkgEl = document.getElementById("csvm-package");
+  const voipEl = document.getElementById("csvm-voip");
+  const extraCbs = document.querySelectorAll(".csvm-extra-cb");
+  const previewEl = document.getElementById("csvm-preview");
+  const confirmBtn = document.getElementById("csvm-confirm");
+
+  if (uiData.prefilledDpi) dpiEl.value = uiData.prefilledDpi;
+
+  const updateMemo = () => {
+    const dpi = dpiEl.value.trim() || "[DPI ORDER #]";
+    const mrc = mrcEl.value.trim() || "0.00";
+
+    let pkg = pkgEl.value;
+    if (voipEl.checked) pkg += " + VOIP";
+
+    const selectedExtras = Array.from(extraCbs)
+      .filter((cb) => cb.checked)
+      .map((cb) => cb.value);
+    const extrasStr =
+      selectedExtras.length > 0 ? selectedExtras.join(", ") : "None";
+
+    const cbr = uiData.cbr || lead.cbr || lead.phone || "[NO CONTACT NUMBER]";
+    const btn = uiData.btn || lead.btn || lead.BTN || "[NO BTN]";
+    const address =
+      `${lead.address || ""} ${lead.city || ""} ${lead.state || ""} ${lead.zip || ""}`.trim() ||
+      "[NO ADDRESS]";
+
+    const memo = `Name: ${lead.name || "Unknown"}
+Service Address: ${address}
+Billing Telephone Number (BTN): ${btn}
+Order Number: ${dpi}
+==Order Details: RESI C2F MIGRATION==
+Package: ${pkg}
+Monthly Price: $${mrc}
+Extras: ${extrasStr}
+Best Contact Number: ${cbr}
+Best Time of Day to Contact: 8AM-8PM
+Method of Contact: PHONE CALL
+For notes for tech, please see plant remarks.
+CX WAS INFORMED OF REQUIRED DUE DATE RESPONSE.`;
+
+    // 🚀 We build the short string here to send to SharePoint
+    const shortMemo = `${pkg} | Extras: ${extrasStr} | MRC: $${mrc}`;
+
+    previewEl.value = memo;
+
+    if (/^\d{8}$/.test(dpiEl.value.trim())) {
+      dpiEl.style.borderColor = "var(--green)";
+      dpiEl.style.boxShadow = "0 0 12px var(--green-glow)";
+    } else if (dpiEl.value.trim().length > 0) {
+      dpiEl.style.borderColor = "var(--border)";
+      dpiEl.style.boxShadow = "none";
+    }
+
+    return { memo, shortMemo, dpi: dpiEl.value.trim() };
+  };
+
+  dpiEl.addEventListener("input", updateMemo);
+  mrcEl.addEventListener("input", updateMemo);
+  pkgEl.addEventListener("change", updateMemo);
+  voipEl.addEventListener("change", updateMemo);
+  extraCbs.forEach((cb) => cb.addEventListener("change", updateMemo));
+
+  updateMemo();
+
+  document.getElementById("csvm-close").onmouseover = function () {
+    this.style.color = "var(--red)";
+  };
+  document.getElementById("csvm-close").onmouseout = function () {
+    this.style.color = "#94a3b8";
+  };
+
+  const closeIt = () => overlay.remove();
+  document.getElementById("csvm-close").onclick = closeIt;
+  document.getElementById("csvm-cancel").onclick = closeIt;
+
+  confirmBtn.onclick = async () => {
+    const { memo, shortMemo, dpi } = updateMemo();
+
+    if (!/^\d{8}$/.test(dpi)) {
+      dpiEl.style.borderColor = "var(--red)";
+      dpiEl.style.boxShadow = "0 0 12px var(--red-dim)";
+      UI.showToast("Please enter a valid 8-digit DPI Order Number.", "error");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(memo);
+      UI.showToast("Memo copied to clipboard!", "success");
+    } catch (err) {
+      console.warn("Clipboard failed, but sale continuing", err);
+    }
+
+    confirmBtn.disabled = true;
+    confirmBtn.innerHTML = "Processing Sale...";
+
+    setTimeout(() => {
+      overlay.remove();
+      // Pass the shortMemo via the payload
+      agentSaveAll(leadId, true, {
+        dpi,
+        memoText: memo,
+        shortMemoText: shortMemo,
+      });
+    }, 400);
+  };
+}
+
+async function agentSaveAll(
+  leadId,
+  bypassSaleVerification = false,
+  saleMemoData = null,
+) {
+  const user = State.currentUser;
 
   const lead = State.leads.find((l) => l.id === leadId);
   if (!lead) return;
 
   const newStatus = _stagedStatus || lead.status;
 
-  // 1. Grab UI Values
   const mrc = (document.getElementById("feed-mrc") || {}).value || "";
   const productsSelectEl = document.getElementById("feed-products");
   let products = "";
@@ -2166,14 +2468,10 @@ async function agentSaveAll(leadId) {
   let rawCallbackDate =
     (document.getElementById("f-callback-date") || {}).value || "";
 
-  // ==========================================
-  // 🛑 THE BOUNCER: Require Status Change & Required Notes
-  // ==========================================
   if (newStatus === "New") {
     return UI.showToast("Please update the lead status from 'New'.", "warning");
   }
 
-  // 📝 REQUIRED NOTE CHECK: Blocks saving if the textarea is empty or just spaces
   if (!newNote.trim()) {
     const notesEl = document.getElementById("feed-notes");
     if (notesEl) {
@@ -2182,7 +2480,6 @@ async function agentSaveAll(leadId) {
       notesEl.style.boxShadow = "0 0 8px rgba(239, 68, 68, 0.4)";
       notesEl.focus();
 
-      // Remove the red highlight after 2.5 seconds
       setTimeout(() => {
         notesEl.style.borderColor = "";
         notesEl.style.boxShadow = "";
@@ -2194,18 +2491,29 @@ async function agentSaveAll(leadId) {
     );
   }
 
-  // Validation (Terminal Bypass)
+  const soldStatus =
+    typeof Config !== "undefined" && Config.soldStatus
+      ? Config.soldStatus
+      : "Sold";
+
+  if (newStatus === soldStatus && !bypassSaleVerification) {
+    if (!mrc) return UI.showToast("Enter MRC before finalizing", "error");
+    if (btn.replace(/\D/g, "").length !== 10)
+      return UI.showToast("Valid 10-digit BTN required", "error");
+
+    openDpiVerificationModal(leadId, { btn, cbr, mrc, newNote });
+    return;
+  }
+
   const isTerminal = Config.terminalStatuses.includes(newStatus);
   if (!isTerminal) {
     if (!autoPay) return UI.showToast("Select AutoPay", "error");
-    if (newStatus === Config.soldStatus && !soldByName)
-      return UI.showToast("Select Sold By", "error");
     if (!mrc) return UI.showToast("Enter MRC", "error");
     if (btn.replace(/\D/g, "").length !== 10)
       return UI.showToast("Valid BTN required", "error");
   }
 
-  // Note Stamping
+  // 🚀 SINGLE-LINE NOTE STAMPING
   let notes = lead.notes || "";
   if (newNote.trim()) {
     const today = new Date();
@@ -2216,22 +2524,32 @@ async function agentSaveAll(leadId) {
       "/" +
       String(today.getFullYear()).slice(-2);
     const agentTag = user && user.name ? " - " + user.name : "";
-    const stamped = `[${dateStamp}${agentTag}] ${newStatus} - ${newNote.trim()}`;
+
+    // Check if we need to prepend the short DPI string inline with the note
+    let dpiPrefix = "";
+    if (saleMemoData) {
+      if (saleMemoData.shortMemoText) {
+        dpiPrefix = `[DPI: ${saleMemoData.dpi} | ${saleMemoData.shortMemoText}] `;
+      } else {
+        dpiPrefix = `[DPI: ${saleMemoData.dpi}] `;
+      }
+    }
+
+    // Creates: [DPI: 12345678 | Package...] [09/04/26 - Agent] Sold - User note here
+    const stamped = `${dpiPrefix}[${dateStamp}${agentTag}] ${newStatus} - ${newNote.trim()}`;
     notes = notes ? stamped + "\n" + notes : stamped;
   }
 
-  // Activity Log Email Resolution
-  const soldByContractor = soldByName
-    ? State.contractors.find((c) => c.name === soldByName)
-    : null;
-  const soldByEmail = soldByContractor
-    ? soldByContractor.email || soldByName
-    : (user && user.email) || "";
-  const activityEmail =
-    newStatus === Config.soldStatus ? soldByEmail : (user && user.email) || "";
+  let activityEmail = (user && user.email) || "";
+  if (newStatus === soldStatus && soldByName) {
+    const soldByContractor = State.contractors.find(
+      (c) => c.name === soldByName,
+    );
+    activityEmail = soldByContractor
+      ? soldByContractor.email || soldByName
+      : activityEmail;
+  }
 
-  // 2. Setup Payload for SharePoint
-  // 🚀 THE FIX: Removed .split("T")[0] to save exact timestamp and fix the rapid-aging bug!
   const todayDate = new Date().toISOString();
 
   const saveFields = {
@@ -2265,21 +2583,17 @@ async function agentSaveAll(leadId) {
       AgentEmail: activityEmail,
       Notes:
         notes +
-        (newStatus === Config.soldStatus && soldByName
+        (newStatus === soldStatus && soldByName
           ? ` [Sold by ${soldByName}]`
           : ""),
     };
 
-    // 🚀 THE RACE CONDITION FIX: Sequential Awaits!
-    // The Lead MUST update successfully in SharePoint before the Activity Log is written!
     await Graph.updateLead(leadId, saveFields);
     await Graph.logActivity(logEntry);
 
-    // 🚀 THE FIX: Only put the lead in timeout if SharePoint ACTUALLY accepted it!
     window._sessionWorkedLeads = window._sessionWorkedLeads || new Map();
     window._sessionWorkedLeads.set(leadId, Date.now());
 
-    // LOCAL STATE: Fixed leadName mapping
     State.activityLog.push({
       id: "local-" + Date.now(),
       leadId: leadId,
@@ -2291,7 +2605,6 @@ async function agentSaveAll(leadId) {
       timestamp: new Date().toISOString(),
     });
 
-    // 3. Update RAM (Optimistic UI)
     lead.status = newStatus;
     lead.notes = notes;
     if (mrc) lead.currentMRC = mrc;
@@ -2301,7 +2614,6 @@ async function agentSaveAll(leadId) {
     if (autoPay) lead.autoPay = autoPay;
     lead.callbackAt = rawCallbackDate || null;
 
-    // 🚀 THE ZOMBIE KILLER: Update the local RAM clock!
     lead.lastContacted = new Date().toISOString();
 
     Points.awardPoints(newStatus, leadId);
@@ -2312,21 +2624,17 @@ async function agentSaveAll(leadId) {
       UI.showToast("Saved!", "success");
     }
 
-    // UI State
     _stagedStatus = null;
     _leadSaved = true;
 
-    // Update Save Button
     const saveBtn = document.getElementById("feed-save-btn");
     if (saveBtn) {
-      // 1. Trigger the Success State
       saveBtn.textContent = "Saved ✓";
       saveBtn.disabled = true;
       saveBtn.style.background = "var(--green, #10b981)";
       saveBtn.style.borderColor = "var(--green, #10b981)";
       saveBtn.style.cursor = "default";
 
-      // 2. The 2-Second Cooldown & Reset
       setTimeout(() => {
         saveBtn.textContent = "Save";
         saveBtn.disabled = false;
@@ -2336,7 +2644,6 @@ async function agentSaveAll(leadId) {
       }, 2000);
     }
 
-    // Show Next Row
     const nextRow = document.getElementById("feed-next-row");
     if (nextRow) {
       nextRow.style.display = "block";
@@ -2442,6 +2749,11 @@ function advanceToNextLead() {
         sessionStorage.setItem(
           "_skippedSessionLeads",
           JSON.stringify(window._skippedSessionLeads),
+        );
+        // 🚀 THE FIX: Keep the date stamp perfectly in sync!
+        sessionStorage.setItem(
+          "_skippedSessionDate",
+          new Date().toDateString(),
         );
       }
       isDismissedCallback = true;
