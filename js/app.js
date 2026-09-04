@@ -2964,7 +2964,7 @@ function renderAssignLeads() {
   let currentPage = 1;
   const itemsPerPage = 25;
   const unworkedCheck = document.getElementById("bulk-unworked-check");
-  const workedCheck = document.getElementById("bulk-worked-check"); // 🚀 The new pointer
+  const workedCheck = document.getElementById("bulk-worked-check");
   const typeSelect = document.getElementById("bulk-type-select");
   const stateSelect = document.getElementById("bulk-state-select");
   const batchSelect = document.getElementById("bulk-batch-select");
@@ -3030,15 +3030,13 @@ function renderAssignLeads() {
     const selectedBatch = batchSelect ? batchSelect.value : "all";
     const selectedSort = sortSelect ? sortSelect.value : "newest";
     const requireUnworked = unworkedCheck ? unworkedCheck.checked : false;
-    const requireWorked = workedCheck ? workedCheck.checked : false; // 🚀 Catching the new box
+    const requireWorked = workedCheck ? workedCheck.checked : false;
 
     const filteredLeads = unassigned.filter(function (l) {
-      // 🚀 The true metric of whether a lead has been worked
       const hasBeenWorked = !!(
         l.previousAgents && l.previousAgents.trim() !== ""
       );
 
-      // 🚀 Mutually exclusive filters
       if (requireUnworked && hasBeenWorked) return false;
       if (requireWorked && !hasBeenWorked) return false;
 
@@ -3117,7 +3115,6 @@ function renderAssignLeads() {
               ? `<span title="${escHtml(lead.previousAgents)}" style="font-size:10px; background:#f1f5f9; color:#64748b; padding:2px 6px; border-radius:4px; margin-left:8px; font-weight:600; cursor:help;">↺ ${prevArray.length} prev agents</span>`
               : "";
 
-          // 🚀 UPDATE: Rendering the State instead of the Status
           return `
         <tr>
           <td>
@@ -3160,7 +3157,7 @@ function renderAssignLeads() {
     false,
   );
 
-  // 6. Attach Event Listeners (Added workedCheck to the triggers)
+  // 6. Attach Event Listeners
   const triggers = [
     unworkedCheck,
     workedCheck,
@@ -3201,6 +3198,9 @@ function renderAssignLeads() {
         if (lead.assignedTo !== selectedAgent) return;
         if (Config.terminalStatuses.includes(lead.status || "New")) return;
         if (Graph.isInCoolOff(lead)) return;
+
+        // 🚀 THE FIX: Ignore dead leads waiting for Admin to click "Recycle All"
+        if (lead._action === "needs_recycle") return;
 
         // 2. Callback logic (ignore future scheduled dates)
         let isDueCallback = false;
@@ -3307,7 +3307,7 @@ function renderAssignLeads() {
       if (stateSelect) stateSelect.value = "all";
       if (sortSelect) sortSelect.value = "newest";
       if (unworkedCheck) unworkedCheck.checked = false;
-      if (workedCheck) workedCheck.checked = false; // Reset the new box too
+      if (workedCheck) workedCheck.checked = false;
 
       currentPage = 1;
       updateDynamicDropdowns();
