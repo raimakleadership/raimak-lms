@@ -5130,14 +5130,15 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   const generateKey = (name, address) => {
     const clean = (str) =>
       (str || "")
-        .replace(/[^a-z0-9]/gi, "") // 🚀 THE UPGRADE: Annihilates all spaces, periods, and commas!
+        .replace(/[^a-z0-9]/gi, "") // 🚀 Annihilates all spaces, periods, and commas!
         .toLowerCase();
     return `${clean(name)}|${clean(address)}`;
   };
 
   const existingKeys = new Set();
+
+  // 1. Build the list of existing keys from SharePoint
   (State.leads || []).forEach((lead) => {
-    // 🚀 Stitching the explicit first/last names together to match CSV formatting
     const fullName = `${lead.firstName || ""} ${lead.lastName || ""}`.trim();
     const key = generateKey(fullName, lead.address);
     existingKeys.add(key);
@@ -5146,31 +5147,23 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   const validLeads = [];
   let duplicateCount = 0;
 
+  // 2. Process the CSV rows
   csvData.forEach((row) => {
-    const first = getCSVField(row, ["FirstName", "First Name", "First"]) || "";
-    const last = getCSVField(row, ["LastName", "Last Name", "Last"]) || "";
-    const fullName = `${first} ${last}`.trim();
+    // 🚀 THE FIX: Use your mapper FIRST so the bouncer sees the exact same data SharePoint will see!
+    const mappedFields = mapCSVRowToSharePointFields(row, leadType);
 
-    let street = getCSVField(row, [
-      "StreetAddress",
-      "Street Address",
-      "Address",
-      "WorkAddress",
-    ]);
-    if (!street) {
-      const num = getCSVField(row, ["Number", "House Number", "HouseNo"]);
-      const stName = getCSVField(row, ["Streetname", "Street Name", "Street"]);
-      street = `${num} ${stName}`.trim();
-    }
+    // The mapper outputs FirstName, LastName, and WorkAddress
+    const fullName =
+      `${mappedFields.FirstName || ""} ${mappedFields.LastName || ""}`.trim();
+    const address = mappedFields.WorkAddress || "";
 
-    // Generate the key using the combined full name
-    const key = generateKey(fullName, street);
+    const key = generateKey(fullName, address);
 
     if (existingKeys.has(key)) {
       duplicateCount++;
     } else {
       validLeads.push(row);
-      existingKeys.add(key); // Catches duplicates WITHIN the CSV itself!
+      existingKeys.add(key); // Catch duplicates within the CSV itself
     }
   });
 
@@ -5225,6 +5218,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
     }
 
     const batchRequests = chunk.map((row, index) => {
+      // It's totally fine to map it again here, it ensures the exact same logic is applied to the payload
       const mappedFields = mapCSVRowToSharePointFields(row, leadType);
 
       return {
