@@ -919,6 +919,23 @@ async function recycleLeadAction(leadId, currentAgent, leadName) {
 }
 
 async function recycleAllLeads() {
+  // 🚀 DOUBLE-TAP: Delta Sync before calculating what needs recycling
+  UI.showToast("Verifying recycle queue...", "info");
+  setLoading(true);
+  try {
+    const leadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
+    State.leads = await Graph.getLeads(leadsSyncDate, State.leads);
+  } catch (err) {
+    console.error("Pre-recycle sync failed:", err);
+    UI.showToast(
+      "Cannot recycle: Live sync failed. Check your connection.",
+      "error",
+    );
+    setLoading(false);
+    return; // 🛑 HARD STOP: Do not proceed if we don't have fresh data
+  }
+  setLoading(false);
+
   const recycleLeads = State.leads.filter((l) => {
     return l.flags && l.flags.includes("needs_recycle");
   });
@@ -969,7 +986,7 @@ async function recycleAllLeads() {
     );
 
     await loadAllData();
-    renderDashboard();
+    if (typeof renderDashboard === "function") renderDashboard();
   } catch (err) {
     console.error("Bulk Recycle Error:", err);
     UI.showToast("Failed: " + err.message, "error");
@@ -2787,11 +2804,22 @@ function advanceToNextLead() {
 // ============================================================
 //  ASSIGN LEADS (Admin only)
 // ============================================================
-function renderAssignLeads() {
+async function renderAssignLeads() {
   if (!isAdmin()) {
     navigate("myleads");
     return;
   }
+
+  // 🚀 DOUBLE-TAP 1: The Lightweight Delta Sync on Page Load
+  UI.showToast("Syncing live queue...", "info");
+  setLoading(true);
+  try {
+    const leadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
+    State.leads = await Graph.getLeads(leadsSyncDate, State.leads);
+  } catch (err) {
+    console.error("Sync failed:", err);
+  }
+  setLoading(false);
 
   const { leads, contractors } = State;
   const unassigned = leads.filter(function (l) {
@@ -2952,7 +2980,6 @@ function renderAssignLeads() {
       
       <div class="table-wrap">
         <table class="data-table">
-          <!-- 🚀 UPDATE: Changed Status to State in Table Header -->
           <thead><tr><th>Name</th><th>Type</th><th>BTN</th><th>State</th><th style="text-align: right;">Assign To</th></tr></thead>
           <tbody id="assign-tbody"></tbody>
         </table>
@@ -3464,6 +3491,17 @@ async function bulkAssignToSelectedAgent() {
     return;
   }
 
+  // 🚀 DOUBLE-TAP 2: The Point of No Return Delta Sync
+  UI.showToast("Verifying lead availability...", "info");
+  setLoading(true);
+  try {
+    const leadsSyncDate = localStorage.getItem("RaimakLeadsLastSyncDate");
+    State.leads = await Graph.getLeads(leadsSyncDate, State.leads);
+  } catch (err) {
+    console.warn("Pre-assign sync failed, proceeding with local cache:", err);
+  }
+  setLoading(false); // Turn off the UI block briefly while we calculate math below
+
   // ==========================================
   // 🛡️ EARLY ROUTING VALIDATION
   // ==========================================
@@ -3479,7 +3517,7 @@ async function bulkAssignToSelectedAgent() {
   }
   // ==========================================
 
-  // 2. Get the base unassigned pool
+  // 2. Get the base unassigned pool (Using fresh data from the sync)
   const unassigned = State.leads.filter(function (l) {
     const isValidLead = l && l.id && (l.name || l.phone || l.BTN || l.btn);
     const isAvailable =
