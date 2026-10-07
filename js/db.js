@@ -102,4 +102,21 @@ const LocalDB = {
         reject(new Error("Transaction aborted by browser"));
     });
   },
+
+  // 5. Nuke an entire table
+  clearTable: async function (storeName) {
+    if (!this.db) return false;
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction([storeName], "readwrite");
+      const store = transaction.objectStore(storeName);
+
+      const request = store.clear();
+
+      request.onsuccess = () => resolve(true);
+      request.onerror = (event) => reject(event.target.error);
+      transaction.onabort = () =>
+        reject(new Error("Transaction aborted by browser"));
+    });
+  },
 };

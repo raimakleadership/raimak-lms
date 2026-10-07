@@ -384,7 +384,6 @@ function detectRole(user) {
 
 // ── Boot ──────────────────────────────────────────────────────
 window.addEventListener("DOMContentLoaded", async function () {
-  //separated login page html and js
   const loginBtn = document.getElementById("ms-login-btn");
   if (loginBtn) {
     loginBtn.addEventListener("click", function () {
@@ -408,16 +407,35 @@ window.addEventListener("DOMContentLoaded", async function () {
     State.currentUser = Auth.getUser();
     State.role = detectRole(State.currentUser);
 
-    // If they aren't suspended, load the rest of the app!
+    // ==========================================
+    // ♻️ 6-DAY FORCED ADMIN RESYNC
+    // ==========================================
+    if (isAdmin()) {
+      const lastHardSync = localStorage.getItem("RaimakAdminLastHardSync");
+      const now = Date.now();
+      const sixDaysMs = 6 * 24 * 60 * 60 * 1000;
+
+      // If there is no record, OR it's been more than 6 days...
+      if (!lastHardSync || now - parseInt(lastHardSync, 10) > sixDaysMs) {
+        console.warn("♻️ Admin 6-Day cycle reached. Forcing full cache wipe.");
+
+        await LocalDB.clearTable("leads");
+        await LocalDB.clearTable("activity_logs");
+
+        localStorage.removeItem("RaimakLeadsLastSyncDate");
+        localStorage.removeItem("RaimakActivityLastSyncDate");
+        localStorage.setItem("RaimakAdminLastHardSync", now.toString());
+      }
+    }
+    // ==========================================
+
     showAppShell();
     Points.initHUDAutoHider();
-    // ==========================================
+
     // 🛑 THE SUSPENSION GATEKEEPER
-    // ==========================================
     const userEmail = State.currentUser ? State.currentUser.email : null;
 
     if (userEmail) {
-      // 🚀 Now returns the expiration date instead of true/false
       const suspensionExpiration = await Graph.checkSuspensionStatus(userEmail);
 
       if (suspensionExpiration) {
@@ -432,18 +450,18 @@ window.addEventListener("DOMContentLoaded", async function () {
           mainContent.style.width = "100%";
           mainContent.innerHTML = "";
           mainContent.appendChild(template.content.cloneNode(true));
-
-          // 🚀 Start the clock!
           startSuspensionCountdown(suspensionExpiration);
         }
-
         return;
       }
     }
+
     await loadAllData();
+
     if (localStorage.getItem("raimak_perf_mode") === "true") {
       document.body.classList.add("perf-mode");
     }
+
     Points.updateHUD();
     renderDashboard();
     Ticker.update();
@@ -8058,6 +8076,60 @@ function flagLabel(f) {
     }[f] || f
   );
 }
+
+// ==========================================
+// ☢️ ADMIN CACHE NUKE & RESYNC
+// ==========================================
+async function adminForceResync() {
+  if (
+    !confirm(
+      "Are you sure you want to completely wipe your local database and perform a 100% cold boot? This will take a moment.",
+    )
+  )
+    return;
+
+  UI.showToast("Nuking local cache...", "info");
+  setLoading(true);
+
+  try {
+    // 1. Wipe the hard drive (IndexedDB)
+    await LocalDB.clearTable("leads");
+    await LocalDB.clearTable("activity_logs");
+
+    // 2. Wipe the sync tokens
+    localStorage.removeItem("RaimakLeadsLastSyncDate");
+    localStorage.removeItem("RaimakActivityLastSyncDate");
+
+    // 3. Reset the 6-Day timer
+    localStorage.setItem("RaimakAdminLastHardSync", Date.now().toString());
+
+    // 4. Wipe RAM
+    State.leads = [];
+    State.activityLog = [];
+
+    UI.showToast("Cache cleared. Downloading fresh data...", "info");
+
+    // 5. Rebuild
+    await loadAllData();
+
+    UI.showToast("✅ Full Resync Complete!", "success");
+
+    // Rerender whatever view they are currently looking at
+    if (
+      typeof renderDashboard === "function" &&
+      State.currentView === "dashboard"
+    )
+      renderDashboard();
+    if (typeof renderMyLeads === "function" && State.currentView === "myleads")
+      renderMyLeads();
+  } catch (error) {
+    console.error("Failed to resync:", error);
+    UI.showToast("Resync failed. Check console.", "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 function formatDate(d) {
   if (!d) return "";
   return new Date(d).toLocaleDateString("en-GB", {
