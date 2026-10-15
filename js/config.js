@@ -100,6 +100,7 @@ const Config = {
     admins: [
       "B.Hinesley@raimak.com",
       "S.Balleste@raimak.com",
+      "a.cooper@raimak.com",
       "N.Caldwell@raimak.com",
       "C.Scarrett@raimak.com",
       "m.mcalpine@raimak.com",
