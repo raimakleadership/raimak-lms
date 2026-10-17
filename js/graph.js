@@ -256,7 +256,7 @@ const Graph = (() => {
       await LocalDB.saveItems("leads", updatedBatch);
     }
 
-    // 🗺️ THE MAP DEDUPLICATOR (You actually already had this structurally, just ensuring it catches the 5-min overlap!)
+    // 🗺️ THE MAP DEDUPLICATOR
     const leadMap = new Map();
     existingLeads.forEach((l) => leadMap.set(l.id, l));
     updatedBatch.forEach((l) => leadMap.set(l.id, l)); // Overwrites old data with fresh fetched versions
@@ -268,14 +268,21 @@ const Graph = (() => {
         l.status !== "Deleted",
     );
 
-    const validTimestamps = updatedBatch
-      .map(
-        (l) => safeDate(l.modified || l.lastModifiedDateTime)?.getTime() || NaN,
-      )
-      .filter((t) => !isNaN(t));
+    // 🚀 STACK-SAFE HIGH-WATER MARK
+    let maxTime = 0;
+    for (let i = 0; i < updatedBatch.length; i++) {
+      const parsed = safeDate(
+        updatedBatch[i].modified || updatedBatch[i].lastModifiedDateTime,
+      );
+      if (parsed) {
+        const time = parsed.getTime();
+        if (!isNaN(time) && time > maxTime) {
+          maxTime = time;
+        }
+      }
+    }
 
-    if (validTimestamps.length > 0) {
-      const maxTime = Math.max(...validTimestamps);
+    if (maxTime > 0) {
       localStorage.setItem(
         "RaimakLeadsLastSyncDate",
         new Date(maxTime).toISOString(),
@@ -802,9 +809,11 @@ const Graph = (() => {
     // 🚀 STEP 1: Load from IndexedDB
     if (!existingLogs || existingLogs.length === 0) {
       existingLogs = await LocalDB.getAllItems("activity_logs");
-      existingLogs.sort(
-        (a, b) => new Date(b.timestamp) - new Date(a.timestamp),
-      );
+      existingLogs.sort((a, b) => {
+        const tA = a.timestamp || "";
+        const tB = b.timestamp || "";
+        return tB > tA ? 1 : tB < tA ? -1 : 0;
+      });
       if (existingLogs.length > 0) {
         console.log(
           `📦 [Graph.getActivityLog] Loaded ${existingLogs.length} logs from IndexedDB.`,
@@ -925,22 +934,33 @@ const Graph = (() => {
     }
 
     // 🗺️ FIX: MAP DEDUPLICATOR FOR ACTIVITY LOGS
-    // Replaced the blind [...newLogs, ...existingLogs] spread so the 5-min buffer doesn't cause duplicates
     const logMap = new Map();
     existingLogs.forEach((l) => logMap.set(l.id, l));
     newLogs.forEach((l) => logMap.set(l.id, l));
 
     const finalizedLogs = Array.from(logMap.values());
-    finalizedLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); // Resort newest first
 
-    // 🚀 STEP 7: Update the Sync Date
-    const validTimestamps = newLogs
-      .map((log) => safeDate(log.timestamp)?.getTime() || NaN)
-      .filter((time) => !isNaN(time));
+    // Fast ISO string sort (avoids 2.8M Date allocations on 120k rows)
+    finalizedLogs.sort((a, b) => {
+      const tA = a.timestamp || "";
+      const tB = b.timestamp || "";
+      return tB > tA ? 1 : tB < tA ? -1 : 0;
+    });
+
+    // 🚀 STEP 7: Update the Sync Date (Stack-Safe for 120k+ rows)
+    let maxTime = 0;
+    for (let i = 0; i < newLogs.length; i++) {
+      const parsed = safeDate(newLogs[i].timestamp);
+      if (parsed) {
+        const time = parsed.getTime();
+        if (!isNaN(time) && time > maxTime) {
+          maxTime = time;
+        }
+      }
+    }
 
     let newLastSyncDate = lastSyncDate;
-    if (validTimestamps.length > 0) {
-      const maxTime = Math.max(...validTimestamps);
+    if (maxTime > 0) {
       newLastSyncDate = new Date(maxTime).toISOString();
       localStorage.setItem("RaimakActivityLastSyncDate", newLastSyncDate);
     }
