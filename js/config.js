@@ -116,6 +116,39 @@ const Config = {
 
   // In config.js -> Config object:
   salesCenterAgents: [
+    /*"m.mcalpine@raimak.com",
+    "j.torres@raimak.com",
+    "n.caldwell@raimak.com",
+    "k.leroux@raimak.com",
+    "c.scarrett@raimak.com",
+    "jennifer.smith@raimak.com",
+    "a.cooper@raimak.com",
+    "t.mathis@raimak.com",
+    "t.henry@raimak.com",
+    "S.balleste@raimak.com",
+    "N.Jones@raimak.com",
+    "m.stevens@raimak.com",
+    "k.rountree@raimak.com",
+    "j.scroggins@raimak.com",
+    "h.gatlin@raimak.com",
+    "c.vandeboe@raimak.com",
+    "h.norris@raimak.com",
+    "a.owens@raimak.com",
+    "a.lewis@raimak.com",
+    "k.moats@raimak.com",
+    "m.windle@raimak.com",
+    */
+  ],
+
+  universalAgents: [
+    "j.redix@raimak.com",
+    "a.gonzalez@raimak.com",
+    "i.turrubiartez@raimak.com",
+    "t.hughes@raimak.com",
+    "s.kester@raimak.com",
+    "h.bryant@raimak.com",
+    "a.edminster@raimak.com",
+    "m.mcgee@raimak.com",
     "m.mcalpine@raimak.com",
     "j.torres@raimak.com",
     "n.caldwell@raimak.com",
@@ -137,17 +170,6 @@ const Config = {
     "a.lewis@raimak.com",
     "k.moats@raimak.com",
     "m.windle@raimak.com",
-  ],
-
-  universalAgents: [
-    "j.redix@raimak.com",
-    "a.gonzalez@raimak.com",
-    "i.turrubiartez@raimak.com",
-    "t.hughes@raimak.com",
-    "s.kester@raimak.com",
-    "h.bryant@raimak.com",
-    "a.edminster@raimak.com",
-    "m.mcgee@raimak.com",
   ],
 
   scopes: ["Sites.ReadWrite.All", "User.Read"],
