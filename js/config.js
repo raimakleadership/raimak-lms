@@ -116,7 +116,7 @@ const Config = {
 
   // In config.js -> Config object:
   salesCenterAgents: [
-    /*"m.mcalpine@raimak.com",
+    "m.mcalpine@raimak.com",
     "j.torres@raimak.com",
     "n.caldwell@raimak.com",
     "k.leroux@raimak.com",
@@ -137,7 +137,6 @@ const Config = {
     "a.lewis@raimak.com",
     "k.moats@raimak.com",
     "m.windle@raimak.com",
-    */
   ],
 
   universalAgents: [
