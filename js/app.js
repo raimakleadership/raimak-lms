@@ -1755,10 +1755,13 @@ function renderLeadFeedCard(myLeads) {
     return wrapper;
   }
 
+  // THE DRAFT PEEK (Moved up slightly so we can use it for the name field)
+  const draft = State.drafts[lead.id] || {};
+
   // 4. Handle Active Lead State
   activeState.style.display = "block";
 
-  // Badges & Name
+  // Badges
   const typeBadge = clone.getElementById("feed-lead-type");
   if (lead.leadType) {
     typeBadge.textContent = lead.leadType;
@@ -1774,7 +1777,51 @@ function renderLeadFeedCard(myLeads) {
     .replace(/\s+/g, "-")
     .replace(/[^a-z0-9-]/g, "")}`;
 
-  clone.getElementById("feed-lead-name").textContent = lead.name;
+  // ==========================================
+  // ✏️ INLINE NAME EDITOR LOGIC
+  // ==========================================
+  const nameDisplayWrap = clone.getElementById("feed-name-display-wrap");
+  const nameEditWrap = clone.getElementById("feed-name-edit-wrap");
+  const nameDisplay = clone.getElementById("feed-lead-name");
+  const nameInput = clone.getElementById("feed-name-input");
+  const editNameBtn = clone.getElementById("feed-edit-name-btn");
+  const saveNameBtn = clone.getElementById("feed-save-name-btn");
+
+  // Prefer draft name if they started typing it, otherwise use actual name
+  const activeName =
+    draft.name !== undefined ? draft.name : lead.name || "Current Resident";
+  nameDisplay.textContent = activeName;
+  nameInput.value = activeName;
+
+  const toggleNameEdit = (showEdit) => {
+    if (showEdit) {
+      nameDisplayWrap.style.display = "none";
+      nameEditWrap.style.display = "flex";
+      nameInput.focus();
+      // Move cursor to the end of the input
+      nameInput.setSelectionRange(
+        nameInput.value.length,
+        nameInput.value.length,
+      );
+    } else {
+      const newName = nameInput.value.trim() || "Current Resident";
+      nameDisplay.textContent = newName;
+      nameEditWrap.style.display = "none";
+      nameDisplayWrap.style.display = "flex";
+      // Note: We don't manually call updateLeadDraft here because the event listener below catches it!
+    }
+  };
+
+  editNameBtn.onclick = () => toggleNameEdit(true);
+  saveNameBtn.onclick = () => toggleNameEdit(false);
+
+  // Close and save when they hit Enter
+  nameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      toggleNameEdit(false);
+    }
+  });
 
   // Cooloff Alert
   if (isCoolOff) {
@@ -1932,8 +1979,6 @@ function renderLeadFeedCard(myLeads) {
     soldBySelect.appendChild(option);
   });
 
-  // THE DRAFT PEEK
-  const draft = State.drafts[lead.id] || {};
   const activeAutoPay =
     draft.autoPay !== undefined ? draft.autoPay : lead.autoPay;
 
@@ -2010,6 +2055,7 @@ function renderLeadFeedCard(myLeads) {
 
   // THE DRAFT MEMORY ENABLER
   const inputsToDraft = [
+    { id: "feed-name-input", key: "name" }, // 🚀 ADDED THE NEW NAME FIELD HERE!
     { id: "feed-btn", key: "btn" },
     { id: "feed-mrc", key: "mrc" },
     { id: "feed-cbr", key: "cbr" },
@@ -2571,7 +2617,7 @@ async function agentSaveAll(
     }
 
     // Creates: [DPI: 12345678 | Package...] [09/04/26 - Agent] Sold - User note here
-    const stamped = `${dpiPrefix}[${dateStamp}${agentTag}] ${newStatus} - ${newNote.trim()}`;
+    const stamped = `${dpiPrefix}[${dateStamp}${agentTag}] ${newStatus}\n${newNote.trim()}`;
     notes = notes ? stamped + "\n" + notes : stamped;
   }
 
@@ -2587,12 +2633,37 @@ async function agentSaveAll(
 
   const todayDate = new Date().toISOString();
 
+  // ==========================================
+  // 🚀 1. BUILD BASE FIELDS
+  // ==========================================
   const saveFields = {
     Status: newStatus,
     LastTouchedOn: todayDate,
     Notes: notes,
   };
 
+  // ==========================================
+  // ✏️ 2. THE NAME SPLITTER
+  // Grab the edited name from drafts, split it, and push it to SharePoint
+  // ==========================================
+  const draft = State.drafts[leadId] || {};
+  let finalCalculatedName = lead.name; // Keep local state accurate
+
+  if (draft.name !== undefined && draft.name.trim() !== "") {
+    const nameParts = draft.name.trim().split(" ");
+    const parsedFirst = nameParts[0];
+    const parsedLast = nameParts.slice(1).join(" ") || " "; // Fallback space if no last name
+
+    saveFields["FirstName"] = parsedFirst;
+    saveFields["LastName"] = parsedLast;
+
+    // Update our local string so the Activity Log gets the fresh name
+    finalCalculatedName = `${parsedFirst} ${parsedLast}`.trim();
+  }
+
+  // ==========================================
+  // 3. APPEND METADATA
+  // ==========================================
   if (mrc) saveFields["MonthlyRecurringCharge_x0028_MRC"] = mrc;
   if (products) saveFields["CurrentProducts"] = products;
   if (cbr) saveFields["CBR"] = cbr;
@@ -2613,7 +2684,7 @@ async function agentSaveAll(
   try {
     const logEntry = {
       LeadID: leadId,
-      Title: lead.name || "Unknown Lead",
+      Title: finalCalculatedName || "Unknown Lead", // Use the fresh name!
       ActionType: "Status: " + newStatus,
       AgentEmail: activityEmail,
       Notes:
@@ -2632,7 +2703,7 @@ async function agentSaveAll(
     State.activityLog.push({
       id: "local-" + Date.now(),
       leadId: leadId,
-      leadName: lead.name || "Unknown Lead",
+      leadName: finalCalculatedName || "Unknown Lead",
       agent: activityEmail,
       agentEmail: activityEmail,
       action: "Status: " + newStatus,
@@ -2640,8 +2711,16 @@ async function agentSaveAll(
       timestamp: new Date().toISOString(),
     });
 
+    // ==========================================
+    // 💾 4. UPDATE LOCAL RAM
+    // ==========================================
     lead.status = newStatus;
     lead.notes = notes;
+    if (finalCalculatedName !== lead.name) {
+      lead.name = finalCalculatedName;
+      // Wipe the draft so it doesn't stick around next time the card loads
+      delete State.drafts[leadId].name;
+    }
     if (mrc) lead.currentMRC = mrc;
     if (products) lead.currentProducts = products;
     if (cbr) lead.cbr = cbr;
@@ -5014,30 +5093,6 @@ async function handleFileSelect(event) {
   event.target.value = "";
 }
 
-// The CSV Parser (Handles quotes and commas flawlessly)
-function parseCSV(text) {
-  // 🚀 THE SMALL UPGRADE: .replace(/\r/g, "") strips Windows carriage returns before splitting!
-  const lines = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .filter((line) => line.trim() !== "");
-  const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
-  const data = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i]
-      .split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
-      .map((v) => v.trim().replace(/"/g, ""));
-    let row = {};
-
-    headers.forEach((h, index) => {
-      row[h] = values[index] || "";
-    });
-    data.push(row);
-  }
-  return data;
-}
-
 /**
  * Smart CSV Field Lookup:
  * Hunts down a column value in a parsed CSV row regardless of UPPERCASE,
@@ -5072,10 +5127,58 @@ function getCSVField(row, candidates) {
   return "";
 }
 
-/**
- * Maps a raw CSV row into a clean SharePoint Graph API fields payload.
- * Strictly uses internal SharePoint column names to prevent 400 Bad Request errors.
- */
+// ==========================================
+// 📄 1. THE CSV PARSER
+// ==========================================
+function parseCSV(text) {
+  const lines = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .filter((line) => line.trim() !== "");
+  const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+  const data = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i]
+      .split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/)
+      .map((v) => v.trim().replace(/"/g, ""));
+    let row = {};
+
+    headers.forEach((h, index) => {
+      row[h] = values[index] || "";
+    });
+    data.push(row);
+  }
+  return data;
+}
+
+function getCSVField(row, candidates) {
+  if (!row || !candidates || !Array.isArray(candidates)) return "";
+
+  const rowKeys = Object.keys(row);
+
+  for (const candidate of candidates) {
+    const cleanCandidate = String(candidate).trim().toLowerCase();
+    const matchingKey = rowKeys.find(
+      (key) => String(key).trim().toLowerCase() === cleanCandidate,
+    );
+
+    if (
+      matchingKey &&
+      row[matchingKey] !== undefined &&
+      row[matchingKey] !== null &&
+      String(row[matchingKey]).trim() !== ""
+    ) {
+      return String(row[matchingKey]).trim();
+    }
+  }
+
+  return "";
+}
+
+// ==========================================
+// 🗺️ 2. THE FIELD MAPPER (Updated for Verizon)
+// ==========================================
 function mapCSVRowToSharePointFields(row, selectedLeadType) {
   // 1. RESOLVE NAME & ADDRESS FIELDS
   const firstName = getCSVField(row, ["FirstName", "First Name", "First"]);
@@ -5147,29 +5250,30 @@ function mapCSVRowToSharePointFields(row, selectedLeadType) {
     currentProductsValue = "Phone";
   }
 
-  // Save the pre-scrubbed products list as an introductory Note
   let notesValue = "";
   if (rawProducts) {
     notesValue = `Pre-Scrubbed Products: ${rawProducts}`;
   }
 
+  // Apply fallbacks for missing names
+  const finalFirstName = firstName || "Current";
+  const finalLastName = lastName || "Resident";
+  const finalTitle = `${finalFirstName} ${finalLastName}`.trim();
+
   // 5. BUILD THE FINAL SHAREPOINT GRAPH PAYLOAD
-  // Strictly matches your SharePoint schema without introducing invalid standalone keys
   return {
-    Title: `${firstName} ${lastName}`.trim() || "Unknown Lead",
-    FirstName: firstName,
-    LastName: lastName,
-    WorkAddress: fullWorkAddress, // Combined Street + Street 2
+    Title: finalTitle,
+    FirstName: finalFirstName,
+    LastName: finalLastName,
+    WorkAddress: fullWorkAddress,
     WorkCity: city,
     State: state,
     Zip: zip,
 
-    // Core Lead Metadata (Using exact SharePoint internal names)
     Lead_x0020_Type: selectedLeadType,
     Agent_x0020_Assigned: "",
     Status: "New",
 
-    // New Pre-Scrubbed Fields
     BTN: btn,
     CBR: cbr,
     MonthlyRecurringCharge_x0028_MRC: cleanMRC,
@@ -5179,51 +5283,52 @@ function mapCSVRowToSharePointFields(row, selectedLeadType) {
   };
 }
 
+// ==========================================
+// 🚀 3. THE UPLOAD ENGINE (Address-Only Deduplication)
+// ==========================================
 async function uploadLeadsToSharePoint(csvData, leadType) {
-  // ==========================================
-  // 🛡️ 1. THE IN-MEMORY BOUNCER (Deduplication)
-  // ==========================================
-  const generateKey = (name, address) => {
-    const clean = (str) =>
-      (str || "")
-        .replace(/[^a-z0-9]/gi, "") // 🚀 Annihilates all spaces, periods, and commas!
-        .toLowerCase();
-    return `${clean(name)}|${clean(address)}`;
+  // 🛡️ 1. STRICT ADDRESS DEDUPLICATION
+  const generateAddressDedupeKey = (addressStr, zipStr) => {
+    const cleanAddr = String(addressStr || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    const cleanZip = String(zipStr || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    return `ADDR_${cleanAddr}_${cleanZip}`;
   };
 
   const existingKeys = new Set();
 
-  // 1. Build the list of existing keys from SharePoint
+  // 1. Build the list of existing keys from SharePoint (Address + Zip only)
   (State.leads || []).forEach((lead) => {
-    const fullName = `${lead.firstName || ""} ${lead.lastName || ""}`.trim();
-    const key = generateKey(fullName, lead.address);
+    const key = generateAddressDedupeKey(lead.address, lead.zip);
     existingKeys.add(key);
   });
 
-  const validLeads = [];
+  const validPayloads = [];
   let duplicateCount = 0;
 
   // 2. Process the CSV rows
   csvData.forEach((row) => {
-    // 🚀 THE FIX: Use your mapper FIRST so the bouncer sees the exact same data SharePoint will see!
+    // Run through the mapper FIRST so Street 1 & 2 are perfectly combined
     const mappedFields = mapCSVRowToSharePointFields(row, leadType);
 
-    // The mapper outputs FirstName, LastName, and WorkAddress
-    const fullName =
-      `${mappedFields.FirstName || ""} ${mappedFields.LastName || ""}`.trim();
-    const address = mappedFields.WorkAddress || "";
-
-    const key = generateKey(fullName, address);
+    // Deduplicate strictly on the final merged address and zip
+    const key = generateAddressDedupeKey(
+      mappedFields.WorkAddress,
+      mappedFields.Zip,
+    );
 
     if (existingKeys.has(key)) {
       duplicateCount++;
     } else {
-      validLeads.push(row);
+      validPayloads.push(mappedFields); // Save the finished payload
       existingKeys.add(key); // Catch duplicates within the CSV itself
     }
   });
 
-  const totalLeads = validLeads.length;
+  const totalLeads = validPayloads.length;
 
   if (totalLeads === 0) {
     UI.showToast(
@@ -5238,9 +5343,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
     "info",
   );
 
-  // ==========================================
   // 🛑 2. HIJACK THE UI
-  // ==========================================
   const importBtn = document.getElementById("importLeadsBtn");
   const originalBtnHTML = importBtn ? importBtn.innerHTML : "Import CSV";
   if (importBtn) {
@@ -5248,9 +5351,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
     importBtn.style.cursor = "not-allowed";
   }
 
-  // ==========================================
   // 🔀 3. URL SETUP FOR BATCHING
-  // ==========================================
   const host = Config.sharePoint.hostname;
   const sitePath = Config.sharePoint.sites.team;
   const listId = Config.sharePoint.lists.leadsList;
@@ -5261,11 +5362,9 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
   let failCount = 0;
   const batchSize = 20;
 
-  // ==========================================
   // 📦 4. THE BATCHING ENGINE (WITH SMART FIELDS)
-  // ==========================================
   for (let i = 0; i < totalLeads; i += batchSize) {
-    const chunk = validLeads.slice(i, i + batchSize);
+    const chunk = validPayloads.slice(i, i + batchSize);
     const currentBatchNum = Math.ceil(i / batchSize) + 1;
     const totalBatches = Math.ceil(totalLeads / batchSize);
 
@@ -5273,10 +5372,7 @@ async function uploadLeadsToSharePoint(csvData, leadType) {
       importBtn.innerHTML = `⏳ Batch ${currentBatchNum}/${totalBatches}... (${i} saved)`;
     }
 
-    const batchRequests = chunk.map((row, index) => {
-      // It's totally fine to map it again here, it ensures the exact same logic is applied to the payload
-      const mappedFields = mapCSVRowToSharePointFields(row, leadType);
-
+    const batchRequests = chunk.map((mappedFields, index) => {
       return {
         id: String(index + 1),
         method: "POST",
