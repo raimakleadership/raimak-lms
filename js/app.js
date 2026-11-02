@@ -2016,37 +2016,52 @@ function renderLeadFeedCard(myLeads) {
       year: "2-digit",
     });
 
-  // THE RESTORED LEGACY NOTES PARSER
+  // THE RESTORED LEGACY NOTES PARSER (Robust Multi-Line Support)
   const pastNotesContainer = clone.getElementById("feed-past-notes-container");
   if (lead.notes && lead.notes.trim()) {
     pastNotesContainer.style.display = "block";
-    const notesHtml = lead.notes
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((line) => {
-        const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
+
+    // 🚀 THE FIX: Split strictly by the start of a timestamp bracket, not just line breaks
+    // This regex looks for [MM/DD/YY] or [MM/DD/YYYY] at the start of a line, or following a newline
+    const noteBlocks = lead.notes.split(
+      /(?=\n?\[\d{2}\/\d{2}(?:\/\d{2,4})?.*?\])/g,
+    );
+
+    const notesHtml = noteBlocks
+      .filter((block) => block.trim())
+      .map((block) => {
+        const cleanBlock = block.trim();
+        // Extract the bracket data and the actual text body
+        const match = cleanBlock.match(
+          /^\[(\d{2}\/\d{2}(?:\/\d{2,4})?)(.*?)\]\s*([\s\S]*)/,
+        );
+
         if (match) {
           const date = match[1];
           const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
-          const text = match[3];
+          const textBody = match[3];
+
           return `
             <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
               <div style="display:flex;gap:8px;align-items:center;margin-bottom:3px">
                 <span style="font-family:var(--font-mono);font-size:10px;color:#2563B0;font-weight:700;background:#E8F0FF;padding:1px 6px;border-radius:3px">${date}</span>
                 ${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#6B85B0">${escHtml(agent)}</span>` : ""}
               </div>
-              <span style="font-size:13px;color:#1A2640">${escHtml(text)}</span>
+              <span style="font-size:13px;color:#1A2640;white-space:pre-wrap;">${escHtml(textBody)}</span>
             </div>`;
         }
+
+        // Fallback for completely unformatted legacy notes
         return `
           <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #E8EFF8">
             <div style="margin-bottom:3px">
               <span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:#F4F7FD;padding:1px 6px;border-radius:3px">Legacy note — author unknown</span>
             </div>
-            <span style="font-size:13px;color:#4A6080">${escHtml(line)}</span>
+            <span style="font-size:13px;color:#4A6080;white-space:pre-wrap;">${escHtml(cleanBlock)}</span>
           </div>`;
       })
       .join("");
+
     pastNotesContainer.innerHTML = notesHtml;
   }
 
@@ -2615,9 +2630,7 @@ async function agentSaveAll(
         dpiPrefix = `[DPI: ${saleMemoData.dpi}] `;
       }
     }
-
-    // Creates: [DPI: 12345678 | Package...] [09/04/26 - Agent] Sold - User note here
-    const stamped = `${dpiPrefix}[${dateStamp}${agentTag}] ${newStatus}\n${newNote.trim()}`;
+    const stamped = `${dpiPrefix}[${dateStamp}${agentTag}] ${newStatus} - ${newNote.replace(/\n/g, " ").trim()}`;
     notes = notes ? stamped + "\n" + notes : stamped;
   }
 
