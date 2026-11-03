@@ -1337,6 +1337,11 @@ const Graph = (() => {
     return leads.map(function (lead) {
       const flags = [];
 
+      // 🚀 CELINDA SHIELD: Bypass all recycle rules for her DialMyCalls campaign
+      const isCelinda =
+        lead.assignedTo &&
+        lead.assignedTo.trim().toLowerCase() === "celinda miland";
+
       // 🚀 THE BOUNCER: Is an agent actually holding this lead?
       const isAssigned = !!(lead.assignedTo && lead.assignedTo.trim() !== "");
 
@@ -1348,32 +1353,35 @@ const Graph = (() => {
         flags.push("cool_off");
       }
 
-      if (lead.lastContacted) {
-        const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
+      // If it's not Celinda, run standard recycle rules
+      if (!isCelinda) {
+        if (lead.lastContacted) {
+          const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
 
-        // 🚀 TWEAK: Only flag 3rd Contacts for recycle if they are actively assigned AND have no callback
-        if (
-          lead.status === "3rd Contact" &&
-          daysSince >= coolOffDays &&
-          isAssigned &&
-          !hasCallback
-        ) {
-          flags.push("needs_recycle");
+          // 🚀 TWEAK: Only flag 3rd Contacts for recycle if they are actively assigned AND have no callback
+          if (
+            lead.status === "3rd Contact" &&
+            daysSince >= coolOffDays &&
+            isAssigned &&
+            !hasCallback
+          ) {
+            flags.push("needs_recycle");
+          }
         }
-      }
 
-      // 🚀 THE CLOCK FIX: Check 'lastTouchedOn' first!
-      const ref = lead.LastTouchedOn || lead.lastContacted;
+        // 🚀 THE CLOCK FIX: Check 'lastTouchedOn' first!
+        const ref = lead.LastTouchedOn || lead.lastContacted;
 
-      if (
-        ref &&
-        !Config.terminalStatuses.includes(lead.status) &&
-        lead.status !== "3rd Contact" &&
-        isAssigned &&
-        !hasCallback // 🛡️ SHIELD ACTIVE: Protect scheduled callbacks from the general recycle timer
-      ) {
-        const daysSince = (now - new Date(ref)) / 86400000;
-        if (daysSince > recycleAfterDays) flags.push("needs_recycle");
+        if (
+          ref &&
+          !Config.terminalStatuses.includes(lead.status) &&
+          lead.status !== "3rd Contact" &&
+          isAssigned &&
+          !hasCallback // 🛡️ SHIELD ACTIVE: Protect scheduled callbacks from the general recycle timer
+        ) {
+          const daysSince = (now - new Date(ref)) / 86400000;
+          if (daysSince > recycleAfterDays) flags.push("needs_recycle");
+        }
       }
 
       if (lead.assignedTo && agentCounts[lead.assignedTo] > maxLeadsPerAgent) {
