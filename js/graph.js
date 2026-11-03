@@ -602,6 +602,7 @@ const Graph = (() => {
       currentProducts: f.CurrentProducts || "",
       autoPay: f.AutoPay || "",
       previousAgents: f.PreviousAgents || "",
+      lastAssigned: f.LastAssigned || null,
     };
   }
 
@@ -1369,18 +1370,36 @@ const Graph = (() => {
           }
         }
 
-        // 🚀 THE CLOCK FIX: Check 'lastTouchedOn' first!
-        const ref = lead.LastTouchedOn || lead.lastContacted;
+        // ==========================================
+        // 🚀 THE NEW LAST ASSIGNED RECYCLE FIX
+        // ==========================================
+        if (lead.lastAssigned) {
+          const daysSinceAssigned =
+            (now - new Date(lead.lastAssigned)) / 86400000;
 
-        if (
-          ref &&
-          !Config.terminalStatuses.includes(lead.status) &&
-          lead.status !== "3rd Contact" &&
-          isAssigned &&
-          !hasCallback // 🛡️ SHIELD ACTIVE: Protect scheduled callbacks from the general recycle timer
-        ) {
-          const daysSince = (now - new Date(ref)) / 86400000;
-          if (daysSince > recycleAfterDays) flags.push("needs_recycle");
+          if (
+            daysSinceAssigned > coolOffDays &&
+            !Config.terminalStatuses.includes(lead.status) &&
+            lead.status !== "3rd Contact" &&
+            isAssigned &&
+            !hasCallback
+          ) {
+            flags.push("needs_recycle");
+          }
+        } else {
+          // 🚀 FALLBACK: Use the old logic if LastAssigned is not set
+          const ref = lead.LastTouchedOn || lead.lastContacted;
+
+          if (
+            ref &&
+            !Config.terminalStatuses.includes(lead.status) &&
+            lead.status !== "3rd Contact" &&
+            isAssigned &&
+            !hasCallback
+          ) {
+            const daysSince = (now - new Date(ref)) / 86400000;
+            if (daysSince > recycleAfterDays) flags.push("needs_recycle");
+          }
         }
       }
 

@@ -967,7 +967,7 @@ async function recycleAllLeads() {
 
   if (
     !confirm(
-      `Recycle ALL ${recycleLeads.length} ${leadWord} in the queue?\n\nThis will:\n• Reset all their statuses to New\n• Unassign them from their current agents\n• Record previous assignment history\n\nThis cannot be undone.`,
+      `Recycle ALL ${recycleLeads.length} ${leadWord} in the queue?\n\nThis will:\nReset all their statuses to New\nUnassign them from their current agents\nRecord previous assignment history\n\nThis cannot be undone.`,
     )
   ) {
     return;
@@ -986,6 +986,9 @@ async function recycleAllLeads() {
       await Promise.all(
         chunk.map(async (lead) => {
           await Graph.recycleLead(lead.id, lead.assignedTo || "");
+
+          // 🚀 THE NEW CLEAR: Explicitly wipe LastAssigned so it enters the unassigned pool fresh
+          await Graph.updateLead(lead.id, { LastAssigned: null });
 
           await Graph.logActivity({
             LeadID: lead.id,
@@ -3066,6 +3069,9 @@ async function renderAssignLeads() {
         </select>
 
         <span id="agent-readiness-badge" style="display:none; align-items:center; padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: 700; transition: all 0.2s ease; white-space: nowrap;"></span>
+        
+        <!-- 🚀 NEW: The Last Batch Indicator -->
+        <span id="agent-last-batch-badge" style="display:none; align-items:center; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #475569; background: #F1F5F9; white-space: nowrap; border: 1px solid #CBD5E1;"></span>
 
         <div style="display:flex; align-items:center; gap:12px; margin-left: auto;">
           <input type="number" id="bulk-agent-qty" class="form-input" min="1" max="${unassigned.length}" placeholder="Qty" style="width: 90px;">
@@ -3311,120 +3317,157 @@ async function renderAssignLeads() {
       }),
   );
 
-  // 🚀 AGENT READINESS LISTENER
+  // 🚀 AGENT READINESS & LAST ASSIGNED LISTENER
   const agentSelect = document.getElementById("bulk-agent-select");
   const readinessBadge = document.getElementById("agent-readiness-badge");
+  const lastBatchBadge = document.getElementById("agent-last-batch-badge");
 
-  if (agentSelect && readinessBadge) {
+  if (agentSelect) {
     agentSelect.addEventListener("change", (e) => {
       const selectedAgent = e.target.value;
 
       if (!selectedAgent) {
-        readinessBadge.style.display = "none";
+        if (readinessBadge) readinessBadge.style.display = "none";
+        if (lastBatchBadge) lastBatchBadge.style.display = "none";
         return;
       }
 
-      let unworkedCount = 0;
-      let callbackCount = 0;
-      let outOfHoursCount = 0;
+      // --- Readiness Calculator ---
+      if (readinessBadge) {
+        let unworkedCount = 0;
+        let callbackCount = 0;
+        let outOfHoursCount = 0;
+        const now = new Date();
 
-      const now = new Date();
+        State.leads.forEach((lead) => {
+          if (lead.assignedTo !== selectedAgent) return;
+          if (Config.terminalStatuses.includes(lead.status || "New")) return;
+          if (Graph.isInCoolOff(lead)) return;
+          if (lead._action === "needs_recycle") return;
 
-      State.leads.forEach((lead) => {
-        // 1. Base eligibility check
-        if (lead.assignedTo !== selectedAgent) return;
-        if (Config.terminalStatuses.includes(lead.status || "New")) return;
-        if (Graph.isInCoolOff(lead)) return;
+          let isDueCallback = false;
+          if (lead.callbackAt) {
+            const scheduledDate = new Date(lead.callbackAt);
+            scheduledDate.setHours(0, 0, 0, 0);
 
-        // 🚀 THE FIX: Ignore dead leads waiting for Admin to click "Recycle All"
-        if (lead._action === "needs_recycle") return;
+            const todayMidnight = new Date(now);
+            todayMidnight.setHours(0, 0, 0, 0);
 
-        // 2. Callback logic (ignore future scheduled dates)
-        let isDueCallback = false;
-        if (lead.callbackAt) {
-          const scheduledDate = new Date(lead.callbackAt);
-          scheduledDate.setHours(0, 0, 0, 0);
+            let waitingForDate = false;
 
-          const todayMidnight = new Date(now);
-          todayMidnight.setHours(0, 0, 0, 0);
+            if (lead.status === "Pending Order") {
+              if (todayMidnight <= scheduledDate) waitingForDate = true;
+            } else {
+              if (todayMidnight < scheduledDate) waitingForDate = true;
+            }
 
-          let waitingForDate = false;
+            if (waitingForDate) return;
+            isDueCallback = true;
+          }
 
-          if (lead.status === "Pending Order") {
-            if (todayMidnight <= scheduledDate) waitingForDate = true;
+          let isAwake = true;
+          if (lead.state) {
+            const stateKey = lead.state.toUpperCase().trim();
+            let tz = "America/New_York";
+            if (
+              typeof stateTimezones !== "undefined" &&
+              stateTimezones[stateKey]
+            ) {
+              tz = stateTimezones[stateKey];
+            }
+
+            try {
+              const localHour = parseInt(
+                new Intl.DateTimeFormat("en-US", {
+                  hour: "numeric",
+                  hour12: false,
+                  timeZone: tz,
+                }).format(now),
+                10,
+              );
+              isAwake = localHour >= 8 && localHour < 20;
+            } catch (err) {
+              console.warn("Timezone calculation failed for tz:", tz);
+              isAwake = true;
+            }
+          }
+
+          if (!isAwake) {
+            outOfHoursCount++;
+          } else if (isDueCallback) {
+            callbackCount++;
           } else {
-            if (todayMidnight < scheduledDate) waitingForDate = true;
+            unworkedCount++;
           }
+        });
 
-          if (waitingForDate) return; // Future callback, doesn't count against current readiness
-          isDueCallback = true;
-        }
+        readinessBadge.style.display = "inline-flex";
+        const workableActive = unworkedCount + callbackCount;
 
-        // 3. Timezone Logic (8 AM - 8 PM local time)
-        let isAwake = true;
-        if (lead.state) {
-          const stateKey = lead.state.toUpperCase().trim();
-          let tz = "America/New_York"; // Default fallback
-          if (
-            typeof stateTimezones !== "undefined" &&
-            stateTimezones[stateKey]
-          ) {
-            tz = stateTimezones[stateKey];
-          }
-
-          try {
-            const localHour = parseInt(
-              new Intl.DateTimeFormat("en-US", {
-                hour: "numeric",
-                hour12: false,
-                timeZone: tz,
-              }).format(now),
-              10,
-            );
-            isAwake = localHour >= 8 && localHour < 20;
-          } catch (err) {
-            console.warn("Timezone calculation failed for tz:", tz);
-            isAwake = true;
-          }
-        }
-
-        // 4. Categorize the lead
-        if (!isAwake) {
-          outOfHoursCount++;
-        } else if (isDueCallback) {
-          callbackCount++;
+        if (workableActive === 0) {
+          readinessBadge.textContent =
+            outOfHoursCount > 0
+              ? `🟢 Ready for Leads (${outOfHoursCount} Out of Hours)`
+              : "🟢 Ready for Leads";
+          readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
+          readinessBadge.style.color = "#059669";
         } else {
-          unworkedCount++;
+          const details = [];
+          if (unworkedCount > 0) details.push(`${unworkedCount} Unworked`);
+          if (callbackCount > 0)
+            details.push(
+              `${callbackCount} Callback${callbackCount !== 1 ? "s" : ""}`,
+            );
+          if (outOfHoursCount > 0)
+            details.push(`${outOfHoursCount} Out of Hours`);
+
+          readinessBadge.textContent = `🔴 Not Ready (${details.join(", ")})`;
+          readinessBadge.style.backgroundColor = "rgba(244, 63, 94, 0.15)";
+          readinessBadge.style.color = "#E11D48";
         }
-      });
+      }
 
-      // 5. Build the UI Badge
-      readinessBadge.style.display = "inline-flex";
+      // --- 🚀 NEW: Last Batch Calculator (Breakdown Fix) ---
+      if (lastBatchBadge) {
+        const assignedLeadsWithTime = State.leads.filter(
+          (l) => l.assignedTo === selectedAgent && l.lastAssigned,
+        );
 
-      const workableActive = unworkedCount + callbackCount;
-
-      if (workableActive === 0) {
-        // Agent has zero dialable leads right now
-        readinessBadge.textContent =
-          outOfHoursCount > 0
-            ? `🟢 Ready for Leads (${outOfHoursCount} Out of Hours)`
-            : "🟢 Ready for Leads";
-        readinessBadge.style.backgroundColor = "rgba(16, 185, 129, 0.15)";
-        readinessBadge.style.color = "#059669";
-      } else {
-        // Agent is bogged down, build the detailed string
-        const details = [];
-        if (unworkedCount > 0) details.push(`${unworkedCount} Unworked`);
-        if (callbackCount > 0)
-          details.push(
-            `${callbackCount} Callback${callbackCount !== 1 ? "s" : ""}`,
+        if (assignedLeadsWithTime.length > 0) {
+          // Sort descending (newest timestamp first)
+          assignedLeadsWithTime.sort(
+            (a, b) =>
+              new Date(b.lastAssigned).getTime() -
+              new Date(a.lastAssigned).getTime(),
           );
-        if (outOfHoursCount > 0)
-          details.push(`${outOfHoursCount} Out of Hours`);
 
-        readinessBadge.textContent = `🔴 Not Ready (${details.join(", ")})`;
-        readinessBadge.style.backgroundColor = "rgba(244, 63, 94, 0.15)";
-        readinessBadge.style.color = "#E11D48";
+          const newestTime = new Date(
+            assignedLeadsWithTime[0].lastAssigned,
+          ).getTime();
+          const typeCounts = {};
+
+          // Cluster any leads assigned within a 3-minute window (180,000 ms) of the absolute newest assignment
+          for (const l of assignedLeadsWithTime) {
+            const lTime = new Date(l.lastAssigned).getTime();
+            if (newestTime - lTime <= 180000) {
+              const t = l.leadType || "Leads";
+              typeCounts[t] = (typeCounts[t] || 0) + 1;
+            } else {
+              break;
+            }
+          }
+
+          // Build the exact string format: "13 OFS, 12 MLR"
+          const breakdown = Object.keys(typeCounts)
+            .sort((a, b) => typeCounts[b] - typeCounts[a])
+            .map((type) => `${typeCounts[type]} ${type}`)
+            .join(", ");
+
+          lastBatchBadge.textContent = `Last assigned ${breakdown}`;
+          lastBatchBadge.style.display = "inline-flex";
+        } else {
+          lastBatchBadge.style.display = "none";
+        }
       }
     });
   }
@@ -3719,11 +3762,18 @@ async function bulkAssignToSelectedAgent() {
 
   setLoading(true);
   try {
-    // 🚀 RESTORED: Your original lightning-fast bulk engine!
+    // 🚀 THE FIX: Generate the official assignment timestamp
+    const assignmentTimestamp = new Date().toISOString();
+
     await Promise.all(
       leadsToAssign.map(async (lead) => {
-        await Graph.updateLead(lead.id, { Agent_x0020_Assigned: agentName });
+        await Graph.updateLead(lead.id, {
+          Agent_x0020_Assigned: agentName,
+          LastAssigned: assignmentTimestamp, // 🚀 Stamp SharePoint
+        });
+
         lead.assignedTo = agentName; // Instantly mutates local RAM
+        lead.lastAssigned = assignmentTimestamp; // 🚀 Instantly mutates local RAM for the UI
       }),
     );
 

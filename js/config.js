@@ -76,10 +76,12 @@ const Config = {
   currentProducts: [
     "Home Phone + Internet + VAS",
     "Internet",
+    "Internet + VAS",
     "Internet + Phone",
+    "Internet + Phone + VAS",
     "Internet + TV",
     "Internet + TV + Phone",
-    "Internet + VAS",
+    "Internet + TV + Phone + VA",
     "Other",
     "Phone",
     "TV",
