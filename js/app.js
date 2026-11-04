@@ -3072,6 +3072,9 @@ async function renderAssignLeads() {
         
         <!-- 🚀 NEW: The Last Batch Indicator -->
         <span id="agent-last-batch-badge" style="display:none; align-items:center; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: #475569; background: #F1F5F9; white-space: nowrap; border: 1px solid #CBD5E1;"></span>
+        
+        <!-- 🚀 NEW: The Recommendation Badge -->
+        <span id="agent-recommendation-badge" style="display:none; align-items:center; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; color: #0369A1; background: #E0F2FE; white-space: nowrap; border: 1px solid #7DD3FC;"></span>
 
         <div style="display:flex; align-items:center; gap:12px; margin-left: auto;">
           <input type="number" id="bulk-agent-qty" class="form-input" min="1" max="${unassigned.length}" placeholder="Qty" style="width: 90px;">
@@ -3321,6 +3324,7 @@ async function renderAssignLeads() {
   const agentSelect = document.getElementById("bulk-agent-select");
   const readinessBadge = document.getElementById("agent-readiness-badge");
   const lastBatchBadge = document.getElementById("agent-last-batch-badge");
+  const recBadge = document.getElementById("agent-recommendation-badge");
 
   if (agentSelect) {
     agentSelect.addEventListener("change", (e) => {
@@ -3329,6 +3333,7 @@ async function renderAssignLeads() {
       if (!selectedAgent) {
         if (readinessBadge) readinessBadge.style.display = "none";
         if (lastBatchBadge) lastBatchBadge.style.display = "none";
+        if (recBadge) recBadge.style.display = "none";
         return;
       }
 
@@ -3427,7 +3432,7 @@ async function renderAssignLeads() {
         }
       }
 
-      // --- 🚀 NEW: Last Batch Calculator (Breakdown Fix) ---
+      // --- 🚀 NEW: Last Batch Calculator & Alternate Lead Recommendation ---
       if (lastBatchBadge) {
         const assignedLeadsWithTime = State.leads.filter(
           (l) => l.assignedTo === selectedAgent && l.lastAssigned,
@@ -3457,7 +3462,6 @@ async function renderAssignLeads() {
             }
           }
 
-          // Build the exact string format: "13 OFS, 12 MLR"
           const breakdown = Object.keys(typeCounts)
             .sort((a, b) => typeCounts[b] - typeCounts[a])
             .map((type) => `${typeCounts[type]} ${type}`)
@@ -3465,8 +3469,33 @@ async function renderAssignLeads() {
 
           lastBatchBadge.textContent = `Last assigned ${breakdown}`;
           lastBatchBadge.style.display = "inline-flex";
+
+          // Calculate recommendation based on broadband (OFS/MLR) vs voice (D2D TDM/D2D OFS) majority
+          if (recBadge) {
+            let broadbandCount = 0;
+            let voiceCount = 0;
+
+            for (const [type, count] of Object.entries(typeCounts)) {
+              if (type === "OFS" || type === "MLR") {
+                broadbandCount += count;
+              } else if (type === "D2D TDM" || type === "D2D OFS") {
+                voiceCount += count;
+              }
+            }
+
+            if (voiceCount > broadbandCount) {
+              recBadge.textContent = "💡 Recommend: MLR/OFS";
+              recBadge.style.display = "inline-flex";
+            } else if (broadbandCount > voiceCount) {
+              recBadge.textContent = "💡 Recommend: D2D TDM/D2D OFS";
+              recBadge.style.display = "inline-flex";
+            } else {
+              recBadge.style.display = "none";
+            }
+          }
         } else {
           lastBatchBadge.style.display = "none";
+          if (recBadge) recBadge.style.display = "none";
         }
       }
     });
