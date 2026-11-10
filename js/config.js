@@ -70,7 +70,7 @@ const Config = {
   soldStatus: "Sold",
 
   // Lead types
-  leadTypes: ["OFS", "MLR", "D2D OFS", "D2D MLR"],
+  leadTypes: ["OFS", "MLR", "D2D OFS", "D2D TDM"],
 
   // Current products options — alphabetical
   currentProducts: [
