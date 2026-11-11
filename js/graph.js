@@ -1341,7 +1341,7 @@ const Graph = (() => {
       // 🚀 CELINDA SHIELD: Bypass all recycle rules for her DialMyCalls campaign
       const isCelinda =
         lead.assignedTo &&
-        lead.assignedTo.trim().toLowerCase() === "celinda miland";
+        lead.assignedTo.trim().toLowerCase() === "remote incomplete";
 
       // 🚀 THE BOUNCER: Is an agent actually holding this lead?
       const isAssigned = !!(lead.assignedTo && lead.assignedTo.trim() !== "");
