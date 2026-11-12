@@ -1359,7 +1359,7 @@ const Graph = (() => {
         if (lead.lastContacted) {
           const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
 
-          // 🚀 TWEAK: Only flag 3rd Contacts for recycle if they are actively assigned AND have no callback
+          // 🚀 3RD CONTACT RECYCLE: Only flag if assigned, out of cool-off, and no callback
           if (
             lead.status === "3rd Contact" &&
             daysSince >= coolOffDays &&
@@ -1378,7 +1378,7 @@ const Graph = (() => {
             (now - new Date(lead.lastAssigned)) / 86400000;
 
           if (
-            daysSinceAssigned > coolOffDays &&
+            daysSinceAssigned > recycleAfterDays && // 🚀 FIXED: Was using coolOffDays!
             !Config.terminalStatuses.includes(lead.status) &&
             lead.status !== "3rd Contact" &&
             isAssigned &&
@@ -1388,7 +1388,9 @@ const Graph = (() => {
           }
         } else {
           // 🚀 FALLBACK: Use the old logic if LastAssigned is not set
-          const ref = lead.LastTouchedOn || lead.lastContacted;
+          // Added case-insensitivity safety for LastTouchedOn
+          const ref =
+            lead.lastTouchedOn || lead.LastTouchedOn || lead.lastContacted;
 
           if (
             ref &&
