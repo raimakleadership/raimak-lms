@@ -116,13 +116,14 @@ const Config = {
     ],
 
     scrubbers: [
+      "j.smith@raimak.com",
       "s.polanco@raimak.com",
       "s.garcia@raimak.com",
       "m.bunt@raimak.com",
       "m.galeana@raimak.com",
       "c.foor@raimak.com",
       "m.wheaton@raimak.com",
-      "m.elliot@raimak.com",
+      "m.elliott@raimak.com",
       "C.Milland@raimak.com",
       "a.gonzalez@raimak.com",
       "m.mcalpine@raimak.com",
