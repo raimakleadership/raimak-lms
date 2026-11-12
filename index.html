@@ -149,19 +149,6 @@
             Callbacks
             <span class="badge" id="badge-callbacks" style="display: none;"></span>
           </a>
-          <!-- <a
-            class="nav-item admin-only"
-            data-view="drip"
-            onclick="navigate('drip')"
-          >
-            <svg width="18" height="18" fill="none" viewBox="0 0 24 24">
-              <path
-                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"
-                fill="currentColor"
-              />
-            </svg>
-            Drip Feed
-          </a> -->
 
           <a class="nav-item" data-view="stats" onclick="navigate('stats')">
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -177,6 +164,20 @@
             </svg> 
             Coming Soon 
           </a>
+
+          <!-- 🚀 NEW: SCRUB HUB LINK -->
+          <a
+            class="nav-item admin-only"
+            data-view="scrubhub"
+            onclick="navigate('scrubhub')"
+          >
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+            </svg>
+            Scrub Hub
+            <span class="badge" id="badge-scrubhub" style="display: none;"></span>
+          </a>
+
           <a
             class="nav-item admin-only"
             data-view="assign"
@@ -824,6 +825,175 @@
           </div>
           <div id="my-leads-table"></div>
         </div>
+      </div>
+    </template>
+
+    <!-- ========================================== -->
+    <!-- TEMPLATE: SCRUB HUB MAIN VIEW              -->
+    <!-- ========================================== -->
+    <template id="tmpl-scrub-hub">
+      <div style="padding: 24px; max-width: 1200px; margin: 0 auto">
+        <div style="margin-bottom: 24px; display: flex; justify-content: space-between; align-items: flex-end;">
+          <div>
+            <h2 style="font-family: var(--font-head); font-size: 28px; color: #1a2640; margin-bottom: 8px;">🧽 Scrub Hub</h2>
+            <p style="color: rgba(13, 27, 62, 0.6); font-size: 14px; font-weight: 500;">Process and append missing BTNs to raw Frontier leads.</p>
+          </div>
+          <div style="text-align: right">
+            <span style="font-size: 12px; color: rgba(13, 27, 62, 0.5); text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Missing BTN Queue</span>
+            <div id="scrub-hub-count" style="font-size: 24px; color: #2563b0; font-weight: bold">0</div>
+          </div>
+        </div>
+
+        <!-- 🚀 FILTER BAR (Added Lead Type Select) -->
+        <div class="bulk-bar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom: 24px; padding: 12px 16px; border-radius: 8px;">
+          <select id="scrub-batch-select" class="filter-select" style="width: 220px;">
+            <option value="all">Any Batch</option>
+          </select>
+          <select id="scrub-state-select" class="filter-select" style="width: 130px;">
+            <option value="all">Any State</option>
+          </select>
+          <select id="scrub-type-select" class="filter-select" style="width: 150px;">
+            <option value="all">Any Type</option>
+          </select>
+          <select id="scrub-sort-select" class="filter-select" style="width: 140px;">
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+          </select>
+          
+          <div style="margin-left: auto; display: flex; gap: 4px; background: rgba(0,0,0,0.15); padding: 4px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1);">
+            <button id="view-toggle-list" style="padding: 6px; border: none; background: rgba(255,255,255,0.8); border-radius: 4px; cursor: pointer; color: #0f172a; box-shadow: 0 1px 2px rgba(0,0,0,0.1);" title="List View">
+              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+            </button>
+            <button id="view-toggle-grid" style="padding: 6px; border: none; background: transparent; border-radius: 4px; cursor: pointer; color: rgba(255,255,255,0.7);" title="Grid View (4 at a time)">
+              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
+          </div>
+
+          <button id="scrub-reset-filters" class="btn-ghost" style="padding: 6px; margin-left: 8px; color: rgba(255,255,255,0.8);" title="Reset Filters">
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          </button>
+        </div>
+
+        <div id="scrub-queue-container" style="display: flex; flex-direction: column; gap: 16px"></div>
+
+        <div id="scrub-empty-state" class="card" style="display: none; text-align: center; padding: 60px 20px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.6) !important;">
+          <div style="font-size: 40px; margin-bottom: 16px">✨</div>
+          <h3 style="color: #1a2640; margin-bottom: 8px">Queue Empty!</h3>
+          <p style="color: rgba(13,27,62,0.6);">All active leads have BTNs assigned.</p>
+        </div>
+      </div>
+    </template>
+
+    <!-- ========================================== -->
+    <!-- TEMPLATE: SCRUB HUB INDIVIDUAL CARD (LIST) -->
+    <!-- ========================================== -->
+    <template id="tmpl-scrub-card">
+      <div class="feed-card scrub-card" style="margin-bottom: 16px">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <span class="feed-label" id="sc-lead-type">Frontier Staging Queue</span>
+          <span id="sc-address" style="font-family: var(--font-mono); font-size: 11px; color: rgba(13,27,62,0.7); background: rgba(255,255,255,0.3); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(13,27,62,0.1);">📍 Address Placeholder</span>
+        </div>
+        <div class="feed-meta-row" id="sc-meta-container" style="margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px"></div>
+
+        <!-- 🚀 EDITABLE NAME HEADER (List View) -->
+        <div id="sc-name-display-container" class="scrub-name-toggle" style="display: inline-flex; align-items: center; gap: 8px; margin-bottom: 16px; cursor: pointer; padding: 4px 10px; margin-left: -10px; border-radius: 6px;" title="Click to edit name">
+          <div id="sc-display-name" style="font-family: var(--font-head); font-size: 22px; font-weight: 700; color: #1a2640;">Customer Name</div>
+          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: color 0.2s ease;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+        </div>
+
+        <!-- Hidden Inputs (Revealed on click) -->
+        <div id="sc-name-edit-container" class="feed-customer-info" style="margin-bottom: 12px; display: none; gap: 12px; padding: 12px; border-radius: 8px; align-items: flex-end;">
+          <div class="form-group" style="flex: 1"><label>First Name</label><input type="text" id="sc-first-name" class="form-input" placeholder="First Name" /></div>
+          <div class="form-group" style="flex: 1"><label>Last Name</label><input type="text" id="sc-last-name" class="form-input" placeholder="Last Name" /></div>
+          <button id="sc-name-close-btn" class="btn-ghost" style="padding: 10px; margin-bottom: 2px; color: #059669; border: 1px solid rgba(5, 150, 105, 0.3); background: rgba(5, 150, 105, 0.05);" title="Done Editing">
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
+          </button>
+        </div>
+
+        <div class="feed-customer-info" style="padding: 12px; border-radius: 8px;">
+          <div class="form-group"><label>BTN <span style="color: var(--red)">*</span></label><input type="text" id="sc-btn" class="form-input" placeholder="Enter BTN" /></div>
+          <div class="form-group"><label>CBR</label><input type="text" id="sc-cbr" class="form-input" placeholder="Enter CBR" /></div>
+          <div class="form-group"><label>MRC</label><input type="text" id="sc-mrc" class="form-input" placeholder="Enter MRC" /></div>
+          <div class="form-group">
+            <label>Current Products</label>
+            <select id="sc-products" class="form-input"><option value="">Select products...</option></select>
+          </div>
+        </div>
+
+        <div style="margin-top: 16px">
+          <span class="feed-label">Notes</span>
+          <div id="sc-past-notes" class="feed-notes" style="display: none; padding: 10px 14px; margin-top: 6px; margin-bottom: 8px; max-height: 140px; overflow-y: auto; border-radius: 6px;"></div>
+          <textarea id="sc-notes" class="form-input form-textarea" placeholder="Add a note from the scrub..."></textarea>
+        </div>
+
+        <div class="feed-note-row" style="margin-top: 16px; justify-content: flex-end; border-top: 1px solid rgba(13,27,62,0.08); padding-top: 16px;">
+          <button id="sc-save-btn" class="btn-primary" style="padding: 10px 24px">Save & Scrub ✓</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ========================================== -->
+    <!-- TEMPLATE: SCRUB HUB BATCH GROUP (GRID)     -->
+    <!-- ========================================== -->
+    <template id="tmpl-scrub-group">
+      <div class="feed-card scrub-group-wrapper" style="margin-bottom: 24px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;" id="sg-grid-container">
+          <!-- Mini cards injected here -->
+        </div>
+        <div style="border-top: 1px solid rgba(13,27,62,0.08); padding-top: 16px; display: flex; justify-content: space-between; align-items: center;">
+          <span id="sg-status-text" style="color: rgba(13,27,62,0.6); font-size: 13px; font-weight: 600;">Ready to batch scrub</span>
+          <button id="sg-save-batch-btn" class="btn-primary" style="padding: 12px 32px; font-size: 15px;">Save Batch ✓</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ========================================== -->
+    <!-- TEMPLATE: SCRUB HUB MINI CARD (GRID ITEM)  -->
+    <!-- ========================================== -->
+    <template id="tmpl-scrub-mini-card">
+      <div class="scrub-mini-card feed-customer-info" style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <div style="font-weight: 700; color: #0f172a; font-size: 14px; line-height: 1.3;" id="scm-address">Address</div>
+          <span id="scm-lead-type" style="font-family: var(--font-mono); font-size: 10px; color: rgba(3,105,161,0.9); background: rgba(224,242,254,0.6); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(3,105,161,0.2); white-space: nowrap; margin-left: 8px;">Type</span>
+        </div>
+        
+        <div id="scm-name-display-container" class="scrub-name-toggle" style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 4px; margin-bottom: 8px; padding: 4px 8px; margin-left: -8px; border-radius: 6px;" title="Click to edit name">
+          <div id="scm-display-name" style="font-weight: 700; font-size: 16px; color: #0f172a;">Customer Name</div>
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: color 0.2s ease;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+        </div>
+
+        <!-- Hidden Inputs (Revealed on click) -->
+        <div id="scm-name-edit-container" style="display: none; gap: 8px; margin-bottom: 12px; align-items: center;">
+          <input type="text" id="scm-first-name" class="form-input" placeholder="First" style="flex: 1; padding: 6px 10px; font-size: 13px;" />
+          <input type="text" id="scm-last-name" class="form-input" placeholder="Last" style="flex: 1; padding: 6px 10px; font-size: 13px;" />
+          <button id="scm-name-close-btn" class="btn-ghost" style="padding: 6px; color: #059669; border: 1px solid rgba(5, 150, 105, 0.3); background: rgba(5, 150, 105, 0.05); height: 32px;" title="Done Editing">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path></svg>
+          </button>
+        </div>
+        
+        <div style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label style="font-size: 11px; margin-bottom: 2px;">BTN <span style="color: var(--red)">*</span></label>
+            <input type="text" id="scm-btn" class="form-input" placeholder="BTN" style="padding: 6px 10px; font-size: 13px;" />
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 11px; margin-bottom: 2px;">CBR</label>
+            <input type="text" id="scm-cbr" class="form-input" placeholder="CBR" style="padding: 6px 10px; font-size: 13px;" />
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label style="font-size: 11px; margin-bottom: 2px;">MRC</label>
+            <input type="text" id="scm-mrc" class="form-input" placeholder="MRC" style="padding: 6px 10px; font-size: 13px;" />
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size: 11px; margin-bottom: 2px;">Products</label>
+            <select id="scm-products" class="form-input" style="padding: 6px 10px; font-size: 13px; height: 32px;"><option value="">Select...</option></select>
+          </div>
+        </div>
+
+        <textarea id="scm-notes" class="form-input form-textarea" placeholder="Note..." style="min-height: 40px; padding: 6px 10px; font-size: 13px;"></textarea>
       </div>
     </template>
 

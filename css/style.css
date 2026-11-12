@@ -2647,6 +2647,94 @@ textarea {
 
 /* === 9. ANIMATIONS === */
 
+/* ========================================== */
+/* 🧽 SCRUB HUB UI POLISH (Glassmorphism Fix) */
+/* ========================================== */
+/* Name Edit Hover Interaction */
+.scrub-name-toggle {
+  transition: all 0.2s ease;
+}
+.scrub-name-toggle:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+.scrub-name-toggle:hover svg {
+  stroke: #2563eb !important; /* Glows blue on hover */
+}
+
+#scrub-queue-container {
+  animation: scrubFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes scrubFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Base transitions for the frosted wrappers */
+.scrub-card,
+.scrub-group-wrapper {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.scrub-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 20px -8px rgba(13, 27, 62, 0.15) !important;
+  border-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Glass-compliant Mini-Cards */
+.scrub-mini-card {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 8px;
+}
+.scrub-mini-card:hover {
+  /* Brighten the glass slightly, but keep it transparent! */
+  background: rgba(255, 255, 255, 0.35) !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+  box-shadow: 0 8px 16px -4px rgba(13, 27, 62, 0.1);
+  transform: translateY(-2px);
+}
+
+/* View Toggle Button Smoothness for the Smoked Bar */
+#view-toggle-list,
+#view-toggle-grid {
+  transition: all 0.2s ease;
+}
+#view-toggle-list:hover:not([style*="background: rgba(255,255,255,0.8)"]),
+#view-toggle-grid:hover:not([style*="background: rgba(255,255,255,0.8)"]) {
+  background: rgba(255, 255, 255, 0.15) !important;
+  color: #fff !important;
+}
+
+/* Button Polish */
+.scrub-card button,
+.scrub-group-wrapper button {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.scrub-card button:hover,
+.scrub-group-wrapper button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 12px -2px rgba(37, 99, 176, 0.3);
+}
+.scrub-card button:active,
+.scrub-group-wrapper button:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+/* The Exit Animation */
+.scrub-exit {
+  opacity: 0 !important;
+  transform: scale(0.97) translateY(10px) !important;
+  pointer-events: none;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
 @keyframes fadeUp {
   from {
     opacity: 0;

@@ -596,9 +596,6 @@ function showAppShell() {
 // ============================================================
 //  NAVIGATION
 // ============================================================
-// ============================================================
-//  NAVIGATION
-// ============================================================
 function navigate(view) {
   // ==========================================
   // 🧹 THE GLOBAL GARBAGE COLLECTOR
@@ -656,6 +653,9 @@ function navigate(view) {
       break;
     case "callbacks":
       renderCallBacks();
+      break;
+    case "scrubhub":
+      renderScrubHub();
       break;
     case "stats":
       renderStats();
@@ -5185,40 +5185,6 @@ async function handleFileSelect(event) {
   event.target.value = "";
 }
 
-/**
- * Smart CSV Field Lookup:
- * Hunts down a column value in a parsed CSV row regardless of UPPERCASE,
- * lowercase, or accidental leading/trailing spaces in the column header.
- */
-function getCSVField(row, candidates) {
-  if (!row || !candidates || !Array.isArray(candidates)) return "";
-
-  // 1. Get all actual column header names present in this CSV row
-  const rowKeys = Object.keys(row);
-
-  for (const candidate of candidates) {
-    // Clean our search term (e.g., "MRC" -> "mrc")
-    const cleanCandidate = String(candidate).trim().toLowerCase();
-
-    // 2. Search row keys case-insensitively
-    const matchingKey = rowKeys.find(
-      (key) => String(key).trim().toLowerCase() === cleanCandidate,
-    );
-
-    // 3. If we find a match and the cell isn't empty, return its trimmed value!
-    if (
-      matchingKey &&
-      row[matchingKey] !== undefined &&
-      row[matchingKey] !== null &&
-      String(row[matchingKey]).trim() !== ""
-    ) {
-      return String(row[matchingKey]).trim();
-    }
-  }
-
-  return "";
-}
-
 // ==========================================
 // 📄 1. THE CSV PARSER
 // ==========================================
@@ -6690,6 +6656,722 @@ function renderActivity() {
   updateTable();
 }
 
+// ==========================================
+// 🚀 1. SCRUB HUB MAIN RENDER (Updated with Type Filter)
+// ==========================================
+function renderScrubHub() {
+  const unscrubbedLeads = State.leads.filter((l) => {
+    if (Config.terminalStatuses && Config.terminalStatuses.includes(l.status))
+      return false;
+    return (l.btn || "").trim() === "";
+  });
+
+  const mainContent = document.getElementById("main-content");
+  mainContent.innerHTML = "";
+
+  const template = document.getElementById("tmpl-scrub-hub");
+  if (!template) return;
+  const clone = template.content.cloneNode(true);
+
+  // Update Counters
+  const countEl = clone.getElementById("scrub-hub-count");
+  if (countEl) countEl.textContent = unscrubbedLeads.length;
+  const sidebarBadge = document.getElementById("badge-scrubhub");
+  if (sidebarBadge) {
+    sidebarBadge.textContent = unscrubbedLeads.length;
+    sidebarBadge.style.display =
+      unscrubbedLeads.length > 0 ? "inline-block" : "none";
+  }
+
+  const queueContainer = clone.getElementById("scrub-queue-container");
+
+  if (unscrubbedLeads.length === 0) {
+    if (queueContainer) {
+      queueContainer.innerHTML = `
+        <div class="card" style="text-align:center; padding:60px 20px;">
+          <div style="font-size:4rem; margin-bottom:20px;">✨</div>
+          <h2 class="view-title">Queue Empty!</h2>
+          <p style="color:var(--text-3); margin-bottom:24px;">All active leads have BTNs assigned.</p>
+          <button class="btn-primary" onclick="this.innerHTML='Syncing...'; this.disabled=true; typeof loadAllData === 'function' ? loadAllData() : window.location.reload();">Check for Updates</button>
+        </div>`;
+    }
+    mainContent.appendChild(clone);
+    return;
+  }
+
+  // BATCH CLUSTERER
+  const batches = [];
+  let currentBatch = null;
+  let legacyCount = 0;
+
+  const sortedForBatches = [...unscrubbedLeads].sort((a, b) => {
+    return (
+      (b.createdAt ? new Date(b.createdAt).getTime() : 0) -
+      (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+    );
+  });
+
+  sortedForBatches.forEach((l) => {
+    if (!l.createdAt) {
+      l._batchId = "legacy";
+      legacyCount++;
+      return;
+    }
+    const lTime = new Date(l.createdAt).getTime();
+    if (!currentBatch) {
+      currentBatch = { time: lTime, count: 1 };
+      batches.push(currentBatch);
+    } else {
+      const diffMinutes = Math.abs(currentBatch.time - lTime) / 60000;
+      if (diffMinutes <= 30) {
+        currentBatch.count++;
+      } else {
+        currentBatch = { time: lTime, count: 1 };
+        batches.push(currentBatch);
+      }
+    }
+    l._batchId = currentBatch.time.toString();
+  });
+
+  // UI Pointers
+  const batchSelect = clone.getElementById("scrub-batch-select");
+  const stateSelect = clone.getElementById("scrub-state-select");
+  const typeSelect = clone.getElementById("scrub-type-select"); // 🚀 NEW Type Filter
+  const sortSelect = clone.getElementById("scrub-sort-select");
+  const resetBtn = clone.getElementById("scrub-reset-filters");
+
+  let viewMode = localStorage.getItem("RaimakScrubViewMode") || "list";
+  const btnList = clone.getElementById("view-toggle-list");
+  const btnGrid = clone.getElementById("view-toggle-grid");
+
+  function applyViewModeStyling() {
+    if (viewMode === "list") {
+      btnList.style.background = "rgba(255,255,255,0.8)";
+      btnList.style.color = "#0f172a";
+      btnList.style.boxShadow = "0 1px 2px rgba(0,0,0,0.1)";
+      btnGrid.style.background = "transparent";
+      btnGrid.style.color = "rgba(255,255,255,0.7)";
+      btnGrid.style.boxShadow = "none";
+    } else {
+      btnGrid.style.background = "rgba(255,255,255,0.8)";
+      btnGrid.style.color = "#0f172a";
+      btnGrid.style.boxShadow = "0 1px 2px rgba(0,0,0,0.1)";
+      btnList.style.background = "transparent";
+      btnList.style.color = "rgba(255,255,255,0.7)";
+      btnList.style.boxShadow = "none";
+    }
+  }
+  applyViewModeStyling();
+
+  btnList.addEventListener("click", () => {
+    viewMode = "list";
+    localStorage.setItem("RaimakScrubViewMode", "list");
+    applyViewModeStyling();
+    updateQueue();
+  });
+
+  btnGrid.addEventListener("click", () => {
+    viewMode = "grid";
+    localStorage.setItem("RaimakScrubViewMode", "grid");
+    applyViewModeStyling();
+    updateQueue();
+  });
+
+  if (batchSelect) {
+    const batchOptionsHTML = batches
+      .map((b) => {
+        const d = new Date(b.time);
+        return `<option value="${b.time}">${d.getMonth() + 1}/${d.getDate()} @ ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (${b.count} leads)</option>`;
+      })
+      .join("");
+    const legacyHTML =
+      legacyCount > 0
+        ? `<option value="legacy">Legacy / Unknown (${legacyCount} leads)</option>`
+        : "";
+    batchSelect.innerHTML =
+      `<option value="all">Any Batch</option>` + batchOptionsHTML + legacyHTML;
+  }
+
+  function updateDropdowns() {
+    const currentBatch = batchSelect ? batchSelect.value : "all";
+    const currentState = stateSelect ? stateSelect.value : "all";
+    const currentType = typeSelect ? typeSelect.value : "all";
+
+    const availableLeads = unscrubbedLeads.filter(
+      (l) => currentBatch === "all" || l._batchId === currentBatch,
+    );
+
+    // Extract unique states & types
+    const states = [
+      ...new Set(
+        availableLeads
+          .map((l) => (l.state || "").trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    ].sort();
+    const types = [
+      ...new Set(
+        availableLeads.map((l) => (l.leadType || "").trim()).filter(Boolean),
+      ),
+    ].sort();
+
+    if (stateSelect) {
+      stateSelect.innerHTML =
+        `<option value="all">Any State</option>` +
+        states
+          .map((s) => `<option value="${escHtml(s)}">${escHtml(s)}</option>`)
+          .join("");
+      stateSelect.value = states.includes(currentState) ? currentState : "all";
+    }
+
+    if (typeSelect) {
+      typeSelect.innerHTML =
+        `<option value="all">Any Type</option>` +
+        types
+          .map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`)
+          .join("");
+      typeSelect.value = types.includes(currentType) ? currentType : "all";
+    }
+  }
+
+  function updateQueue() {
+    const selectedBatch = batchSelect ? batchSelect.value : "all";
+    const selectedState = stateSelect ? stateSelect.value : "all";
+    const selectedType = typeSelect ? typeSelect.value : "all";
+    const selectedSort = sortSelect ? sortSelect.value : "newest";
+
+    let filtered = unscrubbedLeads.filter((l) => {
+      return (
+        (selectedBatch === "all" || l._batchId === selectedBatch) &&
+        (selectedState === "all" ||
+          (l.state || "").toUpperCase() === selectedState) &&
+        (selectedType === "all" || (l.leadType || "").trim() === selectedType)
+      ); // 🚀 Apply Type Filter
+    });
+
+    filtered.sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return selectedSort === "newest" ? tB - tA : tA - tB;
+    });
+
+    const renderLimit = viewMode === "grid" ? 24 : 25;
+    const displayLeads = filtered.slice(0, renderLimit);
+
+    if (queueContainer) {
+      queueContainer.innerHTML = "";
+
+      if (filtered.length === 0) {
+        queueContainer.innerHTML = `<div style="text-align:center; padding: 40px; color: #64748b;">No leads match these filters.</div>`;
+        return;
+      }
+
+      if (viewMode === "list") {
+        displayLeads.forEach((lead) =>
+          queueContainer.appendChild(renderScrubCard(lead)),
+        );
+      } else {
+        for (let i = 0; i < displayLeads.length; i += 4) {
+          const chunk = displayLeads.slice(i, i + 4);
+          queueContainer.appendChild(renderScrubGroup(chunk));
+        }
+      }
+
+      if (filtered.length > renderLimit) {
+        const remaining = filtered.length - renderLimit;
+        const notice = document.createElement("div");
+        notice.style.cssText =
+          "text-align: center; padding: 20px; color: rgba(13, 27, 62, 0.7); font-size: 13px; font-weight: 600; background: rgba(255,255,255,0.4); border-radius: 8px; border: 1px dashed rgba(13, 27, 62, 0.2); margin-top: 10px;";
+        notice.innerHTML = `Showing first ${renderLimit} leads matching filters. Scrub these to reveal the remaining ${remaining} leads.`;
+        queueContainer.appendChild(notice);
+      }
+    }
+  }
+
+  // Bind Listeners
+  [batchSelect, stateSelect, typeSelect, sortSelect].forEach((el) => {
+    if (el)
+      el.addEventListener("change", () => {
+        if (el === batchSelect) updateDropdowns();
+        updateQueue();
+      });
+  });
+
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      if (batchSelect) batchSelect.value = "all";
+      if (sortSelect) sortSelect.value = "newest";
+      updateDropdowns();
+      if (stateSelect) stateSelect.value = "all";
+      if (typeSelect) typeSelect.value = "all";
+      updateQueue();
+    });
+  }
+
+  updateDropdowns();
+  updateQueue();
+  mainContent.appendChild(clone);
+}
+
+// ==========================================
+// 🚀 SCRUB CARD (LIST MODE)
+// ==========================================
+function renderScrubCard(lead) {
+  const template = document.getElementById("tmpl-scrub-card");
+  const clone = template.content.cloneNode(true);
+  const cardEl = clone.firstElementChild;
+
+  const elements = {
+    leadTypeBadge: clone.getElementById("sc-lead-type"),
+    nameDisplayWrap: clone.getElementById("sc-name-display-container"),
+    displayName: clone.getElementById("sc-display-name"),
+    nameEditWrap: clone.getElementById("sc-name-edit-container"),
+    nameCloseBtn: clone.getElementById("sc-name-close-btn"),
+    firstName: clone.getElementById("sc-first-name"),
+    lastName: clone.getElementById("sc-last-name"),
+    btn: clone.getElementById("sc-btn"),
+    cbr: clone.getElementById("sc-cbr"),
+    mrc: clone.getElementById("sc-mrc"),
+    products: clone.getElementById("sc-products"),
+    notes: clone.getElementById("sc-notes"),
+    pastNotes: clone.getElementById("sc-past-notes"),
+    address: clone.getElementById("sc-address"),
+    metaContainer: clone.getElementById("sc-meta-container"),
+    saveBtn: clone.getElementById("sc-save-btn"),
+  };
+
+  // Anti-Collision
+  Object.keys(elements).forEach((key) => {
+    if (elements[key]) elements[key].id = `${elements[key].id}-${lead.id}`;
+  });
+
+  if (elements.leadTypeBadge) {
+    elements.leadTypeBadge.textContent = lead.leadType
+      ? `Staging: ${lead.leadType}`
+      : "Staging: Unknown Type";
+  }
+
+  if (lead.address) {
+    elements.address.textContent = `📍 ${lead.address}${lead.city ? ", " + lead.city : ""}${lead.state ? " " + lead.state : ""}${lead.zip ? " " + lead.zip : ""}`;
+  } else {
+    elements.address.style.display = "none";
+  }
+
+  // 🚀 EDITABLE NAME LOGIC (WITH REVERSE TOGGLE)
+  const fName = lead.firstName || "";
+  const lName =
+    lead.lastName || (lead.name && !lead.firstName ? lead.name : "");
+  const fullName = (fName + " " + lName).trim() || "Unknown Lead";
+
+  if (elements.displayName) elements.displayName.textContent = fullName;
+  if (elements.firstName) elements.firstName.value = fName;
+  if (elements.lastName) elements.lastName.value = lName;
+
+  if (elements.nameDisplayWrap) {
+    elements.nameDisplayWrap.addEventListener("click", () => {
+      elements.nameDisplayWrap.style.display = "none";
+      if (elements.nameEditWrap) elements.nameEditWrap.style.display = "flex";
+      if (elements.firstName) elements.firstName.focus();
+    });
+  }
+
+  if (elements.nameCloseBtn) {
+    elements.nameCloseBtn.addEventListener("click", () => {
+      const updatedFName = elements.firstName
+        ? elements.firstName.value.trim()
+        : "";
+      const updatedLName = elements.lastName
+        ? elements.lastName.value.trim()
+        : "";
+      const updatedFullName =
+        (updatedFName + " " + updatedLName).trim() || "Unknown Lead";
+
+      if (elements.displayName)
+        elements.displayName.textContent = updatedFullName;
+      if (elements.nameEditWrap) elements.nameEditWrap.style.display = "none";
+      if (elements.nameDisplayWrap)
+        elements.nameDisplayWrap.style.display = "inline-flex";
+    });
+  }
+
+  if (elements.btn) elements.btn.value = lead.btn || "";
+  if (elements.cbr) elements.cbr.value = lead.cbr || "";
+  if (elements.mrc) elements.mrc.value = lead.currentMRC || "";
+
+  if (
+    elements.products &&
+    typeof Config !== "undefined" &&
+    Config.currentProducts
+  ) {
+    Config.currentProducts.forEach((p) => {
+      const option = document.createElement("option");
+      option.value = p;
+      option.textContent = p;
+      if (lead.currentProducts === p) option.selected = true;
+      elements.products.appendChild(option);
+    });
+  }
+
+  let metaHtml = "";
+  if (lead.status)
+    metaHtml += `<span class="feed-meta" style="margin-right:12px;">🚦 Status: ${escHtml(lead.status)}</span>`;
+  if (elements.metaContainer) elements.metaContainer.innerHTML = metaHtml;
+
+  if (lead.notes && lead.notes.trim() && elements.pastNotes) {
+    elements.pastNotes.style.display = "block";
+    const notesHtml = lead.notes
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((line) => {
+        const match = line.match(/^\[(\d{2}\/\d{2}(?:\/\d{2})?)(.*?)\]\s*(.*)/);
+        if (match) {
+          const date = match[1];
+          const agent = match[2] ? match[2].replace(/^\s*-\s*/, "") : "";
+          const text = match[3];
+          return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(13,27,62,0.08)"><div style="display:flex;gap:8px;align-items:center;margin-bottom:3px"><span style="font-family:var(--font-mono);font-size:10px;color:#2563B0;font-weight:700;background:rgba(37,99,176,0.1);padding:1px 6px;border-radius:3px">${date}</span>${agent ? `<span style="font-family:var(--font-mono);font-size:10px;color:#6B85B0">${escHtml(agent)}</span>` : ""}</div><span style="font-size:13px;color:#1A2640">${escHtml(text)}</span></div>`;
+        }
+        return `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(13,27,62,0.08)"><div style="margin-bottom:3px"><span style="font-family:var(--font-mono);font-size:10px;color:#8EA5C8;background:rgba(142,165,200,0.15);padding:1px 6px;border-radius:3px">Legacy note</span></div><span style="font-size:13px;color:#4A6080">${escHtml(line)}</span></div>`;
+      })
+      .join("");
+    elements.pastNotes.innerHTML = notesHtml;
+  }
+
+  // 💾 SAVE LOGIC
+  elements.saveBtn.addEventListener("click", async () => {
+    const newBtn = elements.btn ? elements.btn.value.trim() : "";
+    const newCbr = elements.cbr ? elements.cbr.value.trim() : "";
+    const newMrc = elements.mrc ? elements.mrc.value.trim() : "";
+    const newProducts = elements.products ? elements.products.value : "";
+    const newNoteText = elements.notes ? elements.notes.value.trim() : "";
+
+    const newFirstName = elements.firstName
+      ? elements.firstName.value.trim()
+      : "";
+    const newLastName = elements.lastName ? elements.lastName.value.trim() : "";
+    const newFullName = (newFirstName + " " + newLastName).trim();
+
+    if (!newBtn)
+      return (
+        typeof UI !== "undefined" &&
+        UI.showToast("A BTN is required to clear the scrub queue.", "warning")
+      );
+
+    elements.saveBtn.textContent = "Scrubbing...";
+    elements.saveBtn.disabled = true;
+    elements.saveBtn.style.opacity = "0.7";
+
+    try {
+      // 🚀 THE PREVIOUS AGENT STAMP
+      let currentPrev = lead.previousAgents || "";
+      if (!currentPrev.includes("Scrubbed")) {
+        currentPrev = currentPrev ? currentPrev + ", Scrubbed" : "Scrubbed";
+      }
+
+      const payload = {
+        BTN: newBtn,
+        CBR: newCbr,
+        MonthlyRecurringCharge_x0028_MRC: newMrc,
+        CurrentProducts: newProducts,
+        FirstName: newFirstName,
+        LastName: newLastName,
+        Title: newFullName,
+        PreviousAgents: currentPrev,
+      };
+
+      let finalNotes = lead.notes || "";
+      if (newNoteText) {
+        const today = new Date();
+        const dateStamp =
+          (today.getMonth() + 1).toString().padStart(2, "0") +
+          "/" +
+          today.getDate().toString().padStart(2, "0") +
+          "/" +
+          String(today.getFullYear()).slice(-2);
+        const user = State.currentUser;
+        const agentTag = user && user.name ? " - " + user.name : "";
+        const stamped = `[${dateStamp}${agentTag}] Scrubbed - ${newNoteText}`;
+        finalNotes = finalNotes ? stamped + "\n" + finalNotes : stamped;
+        payload.Notes = finalNotes;
+      }
+
+      const user = State.currentUser;
+      const activityEmail = (user && user.email) || "";
+
+      await Graph.updateLead(lead.id, payload);
+      await Graph.logActivity({
+        LeadID: lead.id,
+        Title: newFullName || "Unknown Lead",
+        ActionType: "Scrubbed (BTN Added)",
+        AgentEmail: activityEmail,
+        Notes: newNoteText
+          ? `BTN appended. Note: ${newNoteText}`
+          : `BTN appended during manual scrub.`,
+      });
+
+      // Update Local RAM
+      lead.btn = newBtn;
+      lead.cbr = newCbr;
+      lead.currentMRC = newMrc;
+      lead.currentProducts = newProducts;
+      lead.firstName = newFirstName;
+      lead.lastName = newLastName;
+      lead.name = newFullName;
+      lead.previousAgents = currentPrev;
+      if (newNoteText) lead.notes = finalNotes;
+
+      if (typeof UI !== "undefined")
+        UI.showToast("Lead scrubbed successfully!", "success");
+
+      cardEl.classList.add("scrub-exit");
+      setTimeout(() => {
+        if (typeof renderScrubHub === "function") renderScrubHub();
+      }, 250);
+    } catch (err) {
+      console.error("Scrub Error:", err);
+      if (typeof UI !== "undefined")
+        UI.showToast("Failed to scrub: " + err.message, "error");
+      elements.saveBtn.textContent = "Save & Scrub ✓";
+      elements.saveBtn.disabled = false;
+      elements.saveBtn.style.opacity = "1";
+    }
+  });
+
+  return clone;
+}
+
+// ==========================================
+// 🚀 SCRUB GROUP (GRID MODE)
+// ==========================================
+function renderScrubGroup(leadsChunk) {
+  const templateGroup = document.getElementById("tmpl-scrub-group");
+  const cloneGroup = templateGroup.content.cloneNode(true);
+  const groupEl = cloneGroup.firstElementChild;
+
+  const gridContainer = cloneGroup.getElementById("sg-grid-container");
+  const saveBtn = cloneGroup.getElementById("sg-save-batch-btn");
+  const statusText = cloneGroup.getElementById("sg-status-text");
+
+  statusText.textContent = `Ready to batch scrub ${leadsChunk.length} lead${leadsChunk.length > 1 ? "s" : ""}`;
+  saveBtn.textContent = `Save ${leadsChunk.length} Leads ✓`;
+
+  const miniTemplate = document.getElementById("tmpl-scrub-mini-card");
+
+  leadsChunk.forEach((lead) => {
+    const miniClone = miniTemplate.content.cloneNode(true);
+
+    const elements = {
+      address: miniClone.getElementById("scm-address"),
+      leadType: miniClone.getElementById("scm-lead-type"),
+      nameDisplayWrap: miniClone.getElementById("scm-name-display-container"),
+      displayName: miniClone.getElementById("scm-display-name"),
+      nameEditWrap: miniClone.getElementById("scm-name-edit-container"),
+      nameCloseBtn: miniClone.getElementById("scm-name-close-btn"),
+      firstName: miniClone.getElementById("scm-first-name"),
+      lastName: miniClone.getElementById("scm-last-name"),
+      btn: miniClone.getElementById("scm-btn"),
+      cbr: miniClone.getElementById("scm-cbr"),
+      mrc: miniClone.getElementById("scm-mrc"),
+      products: miniClone.getElementById("scm-products"),
+      notes: miniClone.getElementById("scm-notes"),
+    };
+
+    // Anti-Collision
+    Object.keys(elements).forEach((key) => {
+      if (elements[key]) elements[key].id = `${elements[key].id}-${lead.id}`;
+    });
+
+    elements.address.textContent = lead.address || "Unknown Address";
+    elements.leadType.textContent = lead.leadType || "Unknown";
+
+    // 🚀 EDITABLE NAME LOGIC (WITH REVERSE TOGGLE)
+    const fName = lead.firstName || "";
+    const lName =
+      lead.lastName || (lead.name && !lead.firstName ? lead.name : "");
+    const fullName = (fName + " " + lName).trim() || "Unknown Lead";
+
+    if (elements.displayName) elements.displayName.textContent = fullName;
+    if (elements.firstName) elements.firstName.value = fName;
+    if (elements.lastName) elements.lastName.value = lName;
+
+    if (elements.nameDisplayWrap) {
+      elements.nameDisplayWrap.addEventListener("click", () => {
+        elements.nameDisplayWrap.style.display = "none";
+        if (elements.nameEditWrap) elements.nameEditWrap.style.display = "flex";
+        if (elements.firstName) elements.firstName.focus();
+      });
+    }
+
+    if (elements.nameCloseBtn) {
+      elements.nameCloseBtn.addEventListener("click", () => {
+        const updatedFName = elements.firstName
+          ? elements.firstName.value.trim()
+          : "";
+        const updatedLName = elements.lastName
+          ? elements.lastName.value.trim()
+          : "";
+        const updatedFullName =
+          (updatedFName + " " + updatedLName).trim() || "Unknown Lead";
+
+        if (elements.displayName)
+          elements.displayName.textContent = updatedFullName;
+        if (elements.nameEditWrap) elements.nameEditWrap.style.display = "none";
+        if (elements.nameDisplayWrap)
+          elements.nameDisplayWrap.style.display = "inline-flex";
+      });
+    }
+
+    elements.btn.value = lead.btn || "";
+    elements.cbr.value = lead.cbr || "";
+    elements.mrc.value = lead.currentMRC || "";
+
+    if (
+      elements.products &&
+      typeof Config !== "undefined" &&
+      Config.currentProducts
+    ) {
+      Config.currentProducts.forEach((p) => {
+        const option = document.createElement("option");
+        option.value = p;
+        option.textContent = p;
+        if (lead.currentProducts === p) option.selected = true;
+        elements.products.appendChild(option);
+      });
+    }
+
+    gridContainer.appendChild(miniClone);
+  });
+
+  // 💾 BATCH SAVE LOGIC
+  saveBtn.addEventListener("click", async () => {
+    const batchUpdates = [];
+    let validationFailed = false;
+
+    leadsChunk.forEach((lead) => {
+      if (validationFailed) return;
+
+      const newBtn = document.getElementById(`scm-btn-${lead.id}`).value.trim();
+      const newCbr = document.getElementById(`scm-cbr-${lead.id}`).value.trim();
+      const newMrc = document.getElementById(`scm-mrc-${lead.id}`).value.trim();
+      const newProducts = document.getElementById(
+        `scm-products-${lead.id}`,
+      ).value;
+      const newNote = document
+        .getElementById(`scm-notes-${lead.id}`)
+        .value.trim();
+
+      const newFirstName = document
+        .getElementById(`scm-first-name-${lead.id}`)
+        .value.trim();
+      const newLastName = document
+        .getElementById(`scm-last-name-${lead.id}`)
+        .value.trim();
+      const newFullName = (newFirstName + " " + newLastName).trim();
+
+      if (!newBtn) {
+        if (typeof UI !== "undefined")
+          UI.showToast(
+            `Validation failed: Lead at ${lead.address} is missing a BTN.`,
+            "warning",
+          );
+        validationFailed = true;
+        return;
+      }
+
+      // 🚀 THE PREVIOUS AGENT STAMP (Batch Version)
+      let currentPrev = lead.previousAgents || "";
+      if (!currentPrev.includes("Scrubbed")) {
+        currentPrev = currentPrev ? currentPrev + ", Scrubbed" : "Scrubbed";
+      }
+
+      batchUpdates.push({
+        lead: lead,
+        updates: {
+          BTN: newBtn,
+          CBR: newCbr,
+          MonthlyRecurringCharge_x0028_MRC: newMrc,
+          CurrentProducts: newProducts,
+          FirstName: newFirstName,
+          LastName: newLastName,
+          Title: newFullName,
+          PreviousAgents: currentPrev,
+          _noteContent: newNote,
+        },
+      });
+    });
+
+    if (validationFailed) return;
+
+    saveBtn.textContent = "Saving...";
+    saveBtn.disabled = true;
+    saveBtn.style.opacity = "0.7";
+
+    try {
+      const user = State.currentUser;
+      const activityEmail = (user && user.email) || "";
+
+      await Promise.all(
+        batchUpdates.map(async (item) => {
+          const payload = { ...item.updates };
+          delete payload._noteContent;
+
+          let finalNotes = item.lead.notes || "";
+          if (item.updates._noteContent) {
+            const today = new Date();
+            const dateStamp =
+              (today.getMonth() + 1).toString().padStart(2, "0") +
+              "/" +
+              today.getDate().toString().padStart(2, "0") +
+              "/" +
+              String(today.getFullYear()).slice(-2);
+            const agentTag = user && user.name ? " - " + user.name : "";
+            const stamped = `[${dateStamp}${agentTag}] Scrubbed - ${item.updates._noteContent}`;
+            finalNotes = finalNotes ? stamped + "\n" + finalNotes : stamped;
+            payload.Notes = finalNotes;
+          }
+
+          await Graph.updateLead(item.lead.id, payload);
+          await Graph.logActivity({
+            LeadID: item.lead.id,
+            Title: item.updates.Title || "Unknown Lead",
+            ActionType: "Scrubbed (BTN Added)",
+            AgentEmail: activityEmail,
+            Notes: item.updates._noteContent
+              ? `BTN appended. Note: ${item.updates._noteContent}`
+              : `BTN appended during manual scrub.`,
+          });
+
+          // Update Local RAM
+          item.lead.btn = item.updates.BTN;
+          item.lead.cbr = item.updates.CBR;
+          item.lead.currentMRC = item.updates.MonthlyRecurringCharge_x0028_MRC;
+          item.lead.currentProducts = item.updates.CurrentProducts;
+          item.lead.firstName = item.updates.FirstName;
+          item.lead.lastName = item.updates.LastName;
+          item.lead.name = item.updates.Title;
+          item.lead.previousAgents = item.updates.PreviousAgents;
+          if (item.updates._noteContent) item.lead.notes = finalNotes;
+        }),
+      );
+
+      if (typeof UI !== "undefined")
+        UI.showToast(`Batch saved successfully!`, "success");
+
+      groupEl.classList.add("scrub-exit");
+      setTimeout(() => {
+        if (typeof renderScrubHub === "function") renderScrubHub();
+      }, 250);
+    } catch (err) {
+      console.error("Batch Scrub Error:", err);
+      if (typeof UI !== "undefined")
+        UI.showToast("Failed to save batch: " + err.message, "error");
+      saveBtn.textContent = `Save ${leadsChunk.length} Leads ✓`;
+      saveBtn.disabled = false;
+      saveBtn.style.opacity = "1";
+    }
+  });
+
+  return cloneGroup;
+}
 // ============================================================
 //  STATS PAGE
 // ============================================================
