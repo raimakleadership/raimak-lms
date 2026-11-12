@@ -374,7 +374,9 @@ function isAdmin() {
 }
 
 function isScrubber() {
-  return Config.roles.scrubbers.includes(State.currentUser.email);
+  return Config.roles.scrubbers.some(
+    (e) => e.toLowerCase() === State.currentUser.email.toLowerCase(),
+  );
 }
 
 function detectRole(user) {
