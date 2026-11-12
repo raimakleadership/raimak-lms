@@ -114,6 +114,19 @@ const Config = {
       "c.foor@raimak.com",
       "s.polanco@raimak.com",
     ],
+
+    scrubbers: [
+      "s.polanco@raimak.com",
+      "s.garcia@raimak.com",
+      "m.bunt@raimak.com",
+      "m.galeana@raimak.com",
+      "c.foor@raimak.com",
+      "m.wheaton@raimak.com",
+      "m.elliot@raimak.com",
+      "c.milland@raimak.com",
+      "a.gonzalez@raimak.com",
+      "m.mcalpine@raimak.com",
+    ],
   },
 
   // In config.js -> Config object:

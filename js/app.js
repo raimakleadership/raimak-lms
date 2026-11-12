@@ -373,6 +373,10 @@ function isAdmin() {
   return State.role === "admin";
 }
 
+function isScrubber() {
+  return Config.roles.scrubbers.includes(State.currentUser.email);
+}
+
 function detectRole(user) {
   if (!user) return "agent";
   const email = (user.email || "").toLowerCase();
@@ -589,6 +593,17 @@ function showAppShell() {
   } else {
     document.querySelectorAll(".admin-only").forEach((el) => {
       el.style.display = "flex"; // Or 'block', depending on your CSS
+    });
+  }
+
+  // Hide all elements with the 'scrubber-only' class if they aren't a scrubber.
+  if (!isScrubber()) {
+    document.querySelectorAll(".scrubber-only").forEach((el) => {
+      el.style.display = "none";
+    });
+  } else {
+    document.querySelectorAll(".scrubber-only").forEach((el) => {
+      el.style.display = "flex";
     });
   }
 }
