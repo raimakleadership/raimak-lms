@@ -123,7 +123,7 @@ const Config = {
       "c.foor@raimak.com",
       "m.wheaton@raimak.com",
       "m.elliot@raimak.com",
-      "c.milland@raimak.com",
+      "C.Milland@raimak.com",
       "a.gonzalez@raimak.com",
       "m.mcalpine@raimak.com",
     ],
