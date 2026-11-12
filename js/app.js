@@ -6674,12 +6674,16 @@ function renderActivity() {
 }
 
 // ==========================================
-// 🚀 1. SCRUB HUB MAIN RENDER (Updated with Type Filter)
+// 🚀 1. SCRUB HUB MAIN RENDER
 // ==========================================
 function renderScrubHub() {
+  const badStatuses = ["FNQ", "Already Has Fiber", "Do Not Call"];
   const unscrubbedLeads = State.leads.filter((l) => {
+    // 🚀 NEW: Ensure bad leads pop off the queue instantly even without a BTN
     if (Config.terminalStatuses && Config.terminalStatuses.includes(l.status))
       return false;
+    if (badStatuses.includes(l.status)) return false;
+
     return (l.btn || "").trim() === "";
   });
 
@@ -6690,7 +6694,6 @@ function renderScrubHub() {
   if (!template) return;
   const clone = template.content.cloneNode(true);
 
-  // Update Counters
   const countEl = clone.getElementById("scrub-hub-count");
   if (countEl) countEl.textContent = unscrubbedLeads.length;
   const sidebarBadge = document.getElementById("badge-scrubhub");
@@ -6716,7 +6719,6 @@ function renderScrubHub() {
     return;
   }
 
-  // BATCH CLUSTERER
   const batches = [];
   let currentBatch = null;
   let legacyCount = 0;
@@ -6750,10 +6752,9 @@ function renderScrubHub() {
     l._batchId = currentBatch.time.toString();
   });
 
-  // UI Pointers
   const batchSelect = clone.getElementById("scrub-batch-select");
   const stateSelect = clone.getElementById("scrub-state-select");
-  const typeSelect = clone.getElementById("scrub-type-select"); // 🚀 NEW Type Filter
+  const typeSelect = clone.getElementById("scrub-type-select");
   const sortSelect = clone.getElementById("scrub-sort-select");
   const resetBtn = clone.getElementById("scrub-reset-filters");
 
@@ -6818,7 +6819,6 @@ function renderScrubHub() {
       (l) => currentBatch === "all" || l._batchId === currentBatch,
     );
 
-    // Extract unique states & types
     const states = [
       ...new Set(
         availableLeads
@@ -6863,7 +6863,7 @@ function renderScrubHub() {
         (selectedState === "all" ||
           (l.state || "").toUpperCase() === selectedState) &&
         (selectedType === "all" || (l.leadType || "").trim() === selectedType)
-      ); // 🚀 Apply Type Filter
+      );
     });
 
     filtered.sort((a, b) => {
@@ -6905,7 +6905,6 @@ function renderScrubHub() {
     }
   }
 
-  // Bind Listeners
   [batchSelect, stateSelect, typeSelect, sortSelect].forEach((el) => {
     if (el)
       el.addEventListener("change", () => {
@@ -6931,7 +6930,7 @@ function renderScrubHub() {
 }
 
 // ==========================================
-// 🚀 SCRUB CARD (LIST MODE)
+// 🚀 2. SCRUB CARD (LIST MODE)
 // ==========================================
 function renderScrubCard(lead) {
   const template = document.getElementById("tmpl-scrub-card");
@@ -6950,6 +6949,7 @@ function renderScrubCard(lead) {
     cbr: clone.getElementById("sc-cbr"),
     mrc: clone.getElementById("sc-mrc"),
     products: clone.getElementById("sc-products"),
+    status: clone.getElementById("sc-status"), // 🚀 NEW
     notes: clone.getElementById("sc-notes"),
     pastNotes: clone.getElementById("sc-past-notes"),
     address: clone.getElementById("sc-address"),
@@ -6957,7 +6957,6 @@ function renderScrubCard(lead) {
     saveBtn: clone.getElementById("sc-save-btn"),
   };
 
-  // Anti-Collision
   Object.keys(elements).forEach((key) => {
     if (elements[key]) elements[key].id = `${elements[key].id}-${lead.id}`;
   });
@@ -6974,7 +6973,6 @@ function renderScrubCard(lead) {
     elements.address.style.display = "none";
   }
 
-  // 🚀 EDITABLE NAME LOGIC (WITH REVERSE TOGGLE)
   const fName = lead.firstName || "";
   const lName =
     lead.lastName || (lead.name && !lead.firstName ? lead.name : "");
@@ -7014,6 +7012,14 @@ function renderScrubCard(lead) {
   if (elements.btn) elements.btn.value = lead.btn || "";
   if (elements.cbr) elements.cbr.value = lead.cbr || "";
   if (elements.mrc) elements.mrc.value = lead.currentMRC || "";
+  if (elements.status)
+    elements.status.value = [
+      "FNQ",
+      "Already Has Fiber",
+      "Do Not Call",
+    ].includes(lead.status)
+      ? lead.status
+      : "New"; // 🚀 Restore bad status if it somehow had one
 
   if (
     elements.products &&
@@ -7053,12 +7059,12 @@ function renderScrubCard(lead) {
     elements.pastNotes.innerHTML = notesHtml;
   }
 
-  // 💾 SAVE LOGIC
   elements.saveBtn.addEventListener("click", async () => {
     const newBtn = elements.btn ? elements.btn.value.trim() : "";
     const newCbr = elements.cbr ? elements.cbr.value.trim() : "";
     const newMrc = elements.mrc ? elements.mrc.value.trim() : "";
     const newProducts = elements.products ? elements.products.value : "";
+    const newStatus = elements.status ? elements.status.value : "New"; // 🚀 NEW
     const newNoteText = elements.notes ? elements.notes.value.trim() : "";
 
     const newFirstName = elements.firstName
@@ -7067,18 +7073,25 @@ function renderScrubCard(lead) {
     const newLastName = elements.lastName ? elements.lastName.value.trim() : "";
     const newFullName = (newFirstName + " " + newLastName).trim();
 
-    if (!newBtn)
+    // 🚀 NEW: Bypass BTN Validation if marking as a bad lead
+    const isBadLead = ["FNQ", "Already Has Fiber", "Do Not Call"].includes(
+      newStatus,
+    );
+    if (!newBtn && !isBadLead) {
       return (
         typeof UI !== "undefined" &&
-        UI.showToast("A BTN is required to clear the scrub queue.", "warning")
+        UI.showToast(
+          "A BTN is required unless marking as a Bad Lead.",
+          "warning",
+        )
       );
+    }
 
     elements.saveBtn.textContent = "Scrubbing...";
     elements.saveBtn.disabled = true;
     elements.saveBtn.style.opacity = "0.7";
 
     try {
-      // 🚀 THE PREVIOUS AGENT STAMP
       let currentPrev = lead.previousAgents || "";
       if (!currentPrev.includes("Scrubbed")) {
         currentPrev = currentPrev ? currentPrev + ", Scrubbed" : "Scrubbed";
@@ -7094,6 +7107,13 @@ function renderScrubCard(lead) {
         Title: newFullName,
         PreviousAgents: currentPrev,
       };
+
+      // 🚀 NEW: Append Status payload
+      if (isBadLead) {
+        payload.Status = newStatus;
+      } else {
+        payload.Status = "New"; // Resets status if they toggle it back from Bad
+      }
 
       let finalNotes = lead.notes || "";
       if (newNoteText) {
@@ -7118,14 +7138,15 @@ function renderScrubCard(lead) {
       await Graph.logActivity({
         LeadID: lead.id,
         Title: newFullName || "Unknown Lead",
-        ActionType: "Scrubbed (BTN Added)",
+        ActionType: isBadLead
+          ? `Scrubbed (Bad Lead: ${newStatus})`
+          : "Scrubbed (BTN Added)",
         AgentEmail: activityEmail,
         Notes: newNoteText
-          ? `BTN appended. Note: ${newNoteText}`
-          : `BTN appended during manual scrub.`,
+          ? `Status: ${newStatus}. Note: ${newNoteText}`
+          : `Status: ${newStatus} during manual scrub.`,
       });
 
-      // Update Local RAM
       lead.btn = newBtn;
       lead.cbr = newCbr;
       lead.currentMRC = newMrc;
@@ -7134,6 +7155,7 @@ function renderScrubCard(lead) {
       lead.lastName = newLastName;
       lead.name = newFullName;
       lead.previousAgents = currentPrev;
+      lead.status = isBadLead ? newStatus : "New"; // 🚀 RAM Push
       if (newNoteText) lead.notes = finalNotes;
 
       if (typeof UI !== "undefined")
@@ -7157,7 +7179,7 @@ function renderScrubCard(lead) {
 }
 
 // ==========================================
-// 🚀 SCRUB GROUP (GRID MODE)
+// 🚀 3. SCRUB GROUP (GRID MODE)
 // ==========================================
 function renderScrubGroup(leadsChunk) {
   const templateGroup = document.getElementById("tmpl-scrub-group");
@@ -7189,10 +7211,10 @@ function renderScrubGroup(leadsChunk) {
       cbr: miniClone.getElementById("scm-cbr"),
       mrc: miniClone.getElementById("scm-mrc"),
       products: miniClone.getElementById("scm-products"),
+      status: miniClone.getElementById("scm-status"), // 🚀 NEW
       notes: miniClone.getElementById("scm-notes"),
     };
 
-    // Anti-Collision
     Object.keys(elements).forEach((key) => {
       if (elements[key]) elements[key].id = `${elements[key].id}-${lead.id}`;
     });
@@ -7200,7 +7222,6 @@ function renderScrubGroup(leadsChunk) {
     elements.address.textContent = lead.address || "Unknown Address";
     elements.leadType.textContent = lead.leadType || "Unknown";
 
-    // 🚀 EDITABLE NAME LOGIC (WITH REVERSE TOGGLE)
     const fName = lead.firstName || "";
     const lName =
       lead.lastName || (lead.name && !lead.firstName ? lead.name : "");
@@ -7240,6 +7261,14 @@ function renderScrubGroup(leadsChunk) {
     elements.btn.value = lead.btn || "";
     elements.cbr.value = lead.cbr || "";
     elements.mrc.value = lead.currentMRC || "";
+    if (elements.status)
+      elements.status.value = [
+        "FNQ",
+        "Already Has Fiber",
+        "Do Not Call",
+      ].includes(lead.status)
+        ? lead.status
+        : "New";
 
     if (
       elements.products &&
@@ -7258,7 +7287,6 @@ function renderScrubGroup(leadsChunk) {
     gridContainer.appendChild(miniClone);
   });
 
-  // 💾 BATCH SAVE LOGIC
   saveBtn.addEventListener("click", async () => {
     const batchUpdates = [];
     let validationFailed = false;
@@ -7272,6 +7300,7 @@ function renderScrubGroup(leadsChunk) {
       const newProducts = document.getElementById(
         `scm-products-${lead.id}`,
       ).value;
+      const newStatus = document.getElementById(`scm-status-${lead.id}`).value; // 🚀 NEW
       const newNote = document
         .getElementById(`scm-notes-${lead.id}`)
         .value.trim();
@@ -7284,7 +7313,11 @@ function renderScrubGroup(leadsChunk) {
         .value.trim();
       const newFullName = (newFirstName + " " + newLastName).trim();
 
-      if (!newBtn) {
+      // 🚀 NEW: Bypass validation for Bad Leads
+      const isBadLead = ["FNQ", "Already Has Fiber", "Do Not Call"].includes(
+        newStatus,
+      );
+      if (!newBtn && !isBadLead) {
         if (typeof UI !== "undefined")
           UI.showToast(
             `Validation failed: Lead at ${lead.address} is missing a BTN.`,
@@ -7294,7 +7327,6 @@ function renderScrubGroup(leadsChunk) {
         return;
       }
 
-      // 🚀 THE PREVIOUS AGENT STAMP (Batch Version)
       let currentPrev = lead.previousAgents || "";
       if (!currentPrev.includes("Scrubbed")) {
         currentPrev = currentPrev ? currentPrev + ", Scrubbed" : "Scrubbed";
@@ -7311,8 +7343,10 @@ function renderScrubGroup(leadsChunk) {
           LastName: newLastName,
           Title: newFullName,
           PreviousAgents: currentPrev,
+          Status: isBadLead ? newStatus : "New", // 🚀 Payload Queue
           _noteContent: newNote,
         },
+        isBadLead: isBadLead,
       });
     });
 
@@ -7350,14 +7384,15 @@ function renderScrubGroup(leadsChunk) {
           await Graph.logActivity({
             LeadID: item.lead.id,
             Title: item.updates.Title || "Unknown Lead",
-            ActionType: "Scrubbed (BTN Added)",
+            ActionType: item.isBadLead
+              ? `Scrubbed (Bad Lead: ${item.updates.Status})`
+              : "Scrubbed (BTN Added)",
             AgentEmail: activityEmail,
             Notes: item.updates._noteContent
-              ? `BTN appended. Note: ${item.updates._noteContent}`
-              : `BTN appended during manual scrub.`,
+              ? `Status: ${item.updates.Status}. Note: ${item.updates._noteContent}`
+              : `Status: ${item.updates.Status} during manual scrub.`,
           });
 
-          // Update Local RAM
           item.lead.btn = item.updates.BTN;
           item.lead.cbr = item.updates.CBR;
           item.lead.currentMRC = item.updates.MonthlyRecurringCharge_x0028_MRC;
@@ -7366,6 +7401,7 @@ function renderScrubGroup(leadsChunk) {
           item.lead.lastName = item.updates.LastName;
           item.lead.name = item.updates.Title;
           item.lead.previousAgents = item.updates.PreviousAgents;
+          item.lead.status = item.updates.Status; // 🚀 RAM Push
           if (item.updates._noteContent) item.lead.notes = finalNotes;
         }),
       );
