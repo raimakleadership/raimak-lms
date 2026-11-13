@@ -4286,7 +4286,6 @@ function renderLeads() {
       .map((t) => `<option value="${t}">${t}</option>`)
       .join("");
 
-    // 🚀 INJECTED: The new Delete Batch Trash Can Button
     agentFilter.parentNode.insertAdjacentHTML(
       "beforeend",
       `
@@ -4325,7 +4324,7 @@ function renderLeads() {
   const typeFilter = clone.querySelector("#filter-type");
   const sortFilter = clone.querySelector("#filter-sort");
   const resetFiltersBtn = clone.querySelector("#leads-reset-filters");
-  const deleteBatchBtn = clone.querySelector("#leads-delete-batch"); // 🚀 The New Button Pointer
+  const deleteBatchBtn = clone.querySelector("#leads-delete-batch");
 
   if (batchFilter && State.filters.batch)
     batchFilter.value = State.filters.batch;
@@ -4348,18 +4347,14 @@ function renderLeads() {
         return;
       }
 
-      // 🚀 THE WYSIWYG FIX:
-      // 1. Grab the base list respecting global filters (Search, Status, Agent)
       let baseLeads =
         typeof getFilteredLeads === "function"
           ? getFilteredLeads()
           : State.leads;
 
-      // 2. Grab the exact current values of the local dropdowns
       const selectedState = stateFilter ? stateFilter.value : "all";
       const selectedType = typeFilter ? typeFilter.value : "all";
 
-      // 3. Filter down so the trash can ONLY sees what the user sees
       const leadsToDelete = baseLeads.filter((l) => {
         const batchMatch = l._batchId === selectedBatch;
         const stateMatch =
@@ -4378,7 +4373,6 @@ function renderLeads() {
         return;
       }
 
-      // 1. Build the Safety Modal
       const overlay = document.createElement("div");
       overlay.style.cssText =
         "position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(13, 27, 62, 0.6); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter: blur(3px);";
@@ -4404,7 +4398,6 @@ function renderLeads() {
       overlay.appendChild(modal);
       document.body.appendChild(overlay);
 
-      // 2. Modal Controls
       document.getElementById("cancelBatchDelBtn").onclick = () =>
         overlay.remove();
 
@@ -4417,7 +4410,6 @@ function renderLeads() {
         const idsToDelete = leadsToDelete.map((l) => l.id);
 
         try {
-          // 🚀 THE SOFT DELETE LOOP (With nested try/catch)
           const updatePromises = idsToDelete.map(async (id) => {
             try {
               await Graph.updateLead(id, { Status: "Deleted" });
@@ -4428,31 +4420,23 @@ function renderLeads() {
             }
           });
 
-          // Wait for all promises to resolve
           const results = await Promise.all(updatePromises);
-
-          // Filter out the successful ones
           const successfulIds = results
             .filter((res) => res.success === true)
             .map((res) => res.id);
-
           const failedCount = results.length - successfulIds.length;
 
-          // 3. Immediately wipe successful ones from the local State so the UI feels fast
           State.leads = State.leads.filter(
             (l) => !successfulIds.includes(l.id),
           );
 
-          // 4. Clean the local IndexedDB instantly
           for (const id of successfulIds) {
             await LocalDB.deleteItem("leads", id);
           }
 
-          // 5. Reset the batch filter so they don't look at an empty/broken table
           State.filters.batch = "all";
-
           overlay.remove();
-          renderLeads(); // Force the screen to redraw
+          renderLeads();
 
           if (failedCount > 0) {
             alert(
@@ -4546,8 +4530,35 @@ function renderLeads() {
   const pageIndicator = paginationWrap.querySelector("#leads-page-indicator");
 
   function updateTable() {
+    // START WITH GLOBAL FILTERED LEADS (May or may not include Address search)
     let filtered =
       typeof getFilteredLeads === "function" ? getFilteredLeads() : State.leads;
+
+    // 🚀 NEW: FALLBACK ADDRESS SEARCH
+    // If the user typed a search term, make absolutely sure we filter by Address here
+    // just in case the global getFilteredLeads() misses it.
+    const searchTerm = (State.filters.search || "").trim().toLowerCase();
+    if (searchTerm) {
+      filtered = State.leads.filter((l) => {
+        const nameMatch = l.name && l.name.toLowerCase().includes(searchTerm);
+        const addressMatch =
+          l.address && l.address.toLowerCase().includes(searchTerm);
+        const btnMatch =
+          l.btn && String(l.btn).toLowerCase().includes(searchTerm);
+
+        // Also manually enforce the current Status and Agent filters
+        // to mimic getFilteredLeads() perfectly
+        const statusMatch =
+          State.filters.status === "all" || l.status === State.filters.status;
+        const agentMatch =
+          State.filters.assignedTo === "all" ||
+          l.assignedTo === State.filters.assignedTo;
+
+        return (
+          (nameMatch || addressMatch || btnMatch) && statusMatch && agentMatch
+        );
+      });
+    }
 
     const selectedBatch = batchFilter ? batchFilter.value : "all";
     const selectedState = stateFilter ? stateFilter.value : "all";
