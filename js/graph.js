@@ -1356,39 +1356,50 @@ const Graph = (() => {
 
       // If it's not Celinda, run standard recycle rules
       if (!isCelinda) {
+        // 🛡️ NEW REPAIR SHIELD: If this lead was assigned within the last 48 hours (like a bulk repair),
+        // give the agent their full grace period. Do NOT recycle it for being stale.
+        let justAssigned = false;
+        if (lead.lastAssigned) {
+          const hoursSinceAssigned =
+            (now - new Date(lead.lastAssigned)) / (1000 * 60 * 60);
+          if (hoursSinceAssigned < 48) {
+            // 🚀 Upped to 48 hours!
+            justAssigned = true;
+          }
+        }
+
         if (lead.lastContacted) {
           const daysSince = (now - new Date(lead.lastContacted)) / 86400000;
 
-          // 🚀 3RD CONTACT RECYCLE: Only flag if assigned, out of cool-off, and no callback
+          // 3RD CONTACT RECYCLE: Only flag if assigned, out of cool-off, no callback, and NOT just assigned
           if (
             lead.status === "3rd Contact" &&
             daysSince >= coolOffDays &&
             isAssigned &&
-            !hasCallback
+            !hasCallback &&
+            !justAssigned
           ) {
             flags.push("needs_recycle");
           }
         }
 
-        // ==========================================
-        // 🚀 THE NEW LAST ASSIGNED RECYCLE FIX
-        // ==========================================
+        // STALE / IDLE RECYCLE LOGIC
         if (lead.lastAssigned) {
           const daysSinceAssigned =
             (now - new Date(lead.lastAssigned)) / 86400000;
 
           if (
-            daysSinceAssigned > recycleAfterDays && // 🚀 FIXED: Was using coolOffDays!
+            daysSinceAssigned > recycleAfterDays &&
             !Config.terminalStatuses.includes(lead.status) &&
             lead.status !== "3rd Contact" &&
             isAssigned &&
-            !hasCallback
+            !hasCallback &&
+            !justAssigned // 🚀 Protected if repaired recently
           ) {
             flags.push("needs_recycle");
           }
         } else {
-          // 🚀 FALLBACK: Use the old logic if LastAssigned is not set
-          // Added case-insensitivity safety for LastTouchedOn
+          // FALLBACK: Use the old logic if LastAssigned is not set
           const ref =
             lead.lastTouchedOn || lead.LastTouchedOn || lead.lastContacted;
 
@@ -1397,7 +1408,8 @@ const Graph = (() => {
             !Config.terminalStatuses.includes(lead.status) &&
             lead.status !== "3rd Contact" &&
             isAssigned &&
-            !hasCallback
+            !hasCallback &&
+            !justAssigned // 🚀 Protected if repaired recently
           ) {
             const daysSince = (now - new Date(ref)) / 86400000;
             if (daysSince > recycleAfterDays) flags.push("needs_recycle");

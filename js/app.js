@@ -7219,7 +7219,21 @@ function renderScrubGroup(leadsChunk) {
       if (elements[key]) elements[key].id = `${elements[key].id}-${lead.id}`;
     });
 
-    elements.address.textContent = lead.address || "Unknown Address";
+    // 🚀 NEW: City/State Location Formatter
+    const city = lead.city ? lead.city.trim() : "";
+    const state = lead.state ? lead.state.trim() : "";
+
+    let fullLocation = lead.address || "Unknown Address";
+    if (city && state) {
+      fullLocation += `, ${city}, ${state}`;
+    } else if (city) {
+      fullLocation += `, ${city}`;
+    } else if (state) {
+      fullLocation += `, ${state}`;
+    }
+
+    elements.address.textContent = fullLocation;
+
     elements.leadType.textContent = lead.leadType || "Unknown";
 
     const fName = lead.firstName || "";
