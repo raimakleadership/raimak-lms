@@ -1270,16 +1270,27 @@ const Graph = (() => {
           actions: [],
           uniqueLeads: new Set(),
           uniqueSales: new Set(),
+          uniqueScrubs: new Set(), // 🚀 NEW: Tracking Unique Scrubs
         };
       }
 
+      // Check if it's a contact
       const isContact =
         entry.action &&
         (entry.action.indexOf("Status:") === 0 ||
           entry.action.includes("Contact"));
       if (isContact && entry.leadId) stats[agent].uniqueLeads.add(entry.leadId);
+
+      // Check if it's a sale
       if (entry.action === "Status: " + Config.soldStatus && entry.leadId)
         stats[agent].uniqueSales.add(entry.leadId);
+
+      // 🚀 NEW: Check if it's a Scrub
+      const actionStr = entry.action || entry.ActionType || "";
+      const isScrub =
+        actionStr === "Scrubbed (BTN Added)" ||
+        actionStr.startsWith("Scrubbed (Bad Lead:");
+      if (isScrub && entry.leadId) stats[agent].uniqueScrubs.add(entry.leadId);
 
       stats[agent].actions.push(entry);
     }
@@ -1312,9 +1323,11 @@ const Graph = (() => {
         s.avgTime = avgMs > 0 ? `${mins}m ${secs}s` : "—";
         s.contacts = s.uniqueLeads.size;
         s.sold = s.uniqueSales.size;
+        s.scrubs = s.uniqueScrubs.size; // 🚀 NEW: Assign scrubs to final object
 
         delete s.uniqueLeads;
         delete s.uniqueSales;
+        delete s.uniqueScrubs; // Clean up the Set
         return s;
       })
       .sort((a, b) => b.contacts - a.contacts);

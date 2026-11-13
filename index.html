@@ -841,6 +841,60 @@
           <div style="text-align: right">
             <span style="font-size: 12px; color: rgba(13, 27, 62, 0.5); text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Missing BTN Queue</span>
             <div id="scrub-hub-count" style="font-size: 24px; color: #2563b0; font-weight: bold">0</div>
+            <!-- 🧽 SCRUBS TODAY BADGE (Dark Frosted Glass - Green) -->
+<div class="scrubs-today-badge" id="scrubhub-scrub-badge" style="margin-left: auto;">
+  <style>
+    .viz-card-green {
+      background: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(12px) saturate(120%);
+      -webkit-backdrop-filter: blur(12px) saturate(120%);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      
+      border-radius: 8px;
+      padding: 6px 18px 6px 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      position: relative;
+      overflow: hidden;
+      height: 54px; 
+      box-sizing: border-box;
+    }
+
+    .viz-card-green::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%; width: 50%; height: 100%;
+      background: linear-gradient(to right, transparent, rgba(255,255,255,0.06), transparent);
+      transform: skewX(-20deg);
+      animation: viz-sweep 5s infinite cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .viz-icon-green {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.4);
+      border-radius: 6px;
+      width: 32px; height: 32px;
+      display: flex; justify-content: center; align-items: center;
+      font-size: 16px;
+    }
+  </style>
+
+  <div class="viz-card-green">
+    <div class="viz-icon-green">🧽</div>
+    <div style="display: flex; flex-direction: column; justify-content: center; position: relative; z-index: 2;">
+      <span style="font-family: var(--font-mono, monospace); font-size: 9px; text-transform: uppercase; letter-spacing: 2px; color: #94a3b8; line-height: 1; margin-bottom: 3px; font-weight: 700;">
+        Scrubs Today
+      </span>
+      <span style="font-size: 18px; font-weight: 800; color: #f8fafc; line-height: 1; text-shadow: 0 0 10px rgba(255,255,255,0.2);">
+        <span id="scrub-count-text">0</span> 
+        <span style="font-size: 11px; font-weight: 600; color: #10b981; text-shadow: 0 0 8px rgba(16, 185, 129, 0.4);">leads</span>
+      </span>
+    </div>
+  </div>
+</div>
           </div>
         </div>
 
@@ -886,8 +940,8 @@
 
     <!-- ========================================== -->
     <!-- TEMPLATE: SCRUB HUB INDIVIDUAL CARD (LIST) -->
-    <!-- ========================================== -->
-    <template id="tmpl-scrub-card">
+    <!-- ========================================== -->   
+<template id="tmpl-scrub-card">
       <div class="feed-card scrub-card" style="margin-bottom: 16px">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
           <span class="feed-label" id="sc-lead-type">Frontier Staging Queue</span>
@@ -895,13 +949,11 @@
         </div>
         <div class="feed-meta-row" id="sc-meta-container" style="margin-bottom: 16px; display: flex; flex-wrap: wrap; gap: 8px"></div>
 
-        <!-- 🚀 EDITABLE NAME HEADER (List View) -->
         <div id="sc-name-display-container" class="scrub-name-toggle" style="display: inline-flex; align-items: center; gap: 8px; margin-bottom: 16px; cursor: pointer; padding: 4px 10px; margin-left: -10px; border-radius: 6px;" title="Click to edit name">
           <div id="sc-display-name" style="font-family: var(--font-head); font-size: 22px; font-weight: 700; color: #1a2640;">Customer Name</div>
           <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: color 0.2s ease;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
         </div>
 
-        <!-- Hidden Inputs (Revealed on click) -->
         <div id="sc-name-edit-container" class="feed-customer-info" style="margin-bottom: 12px; display: none; gap: 12px; padding: 12px; border-radius: 8px; align-items: flex-end;">
           <div class="form-group" style="flex: 1"><label>First Name</label><input type="text" id="sc-first-name" class="form-input" placeholder="First Name" /></div>
           <div class="form-group" style="flex: 1"><label>Last Name</label><input type="text" id="sc-last-name" class="form-input" placeholder="Last Name" /></div>
@@ -920,6 +972,15 @@
             <div class="form-group" style="flex: 1;">
               <label>Current Products</label>
               <select id="sc-products" class="form-input"><option value="">Select products...</option></select>
+            </div>
+            <!-- 🚀 NEW: AUTOPAY DROPDOWN LIST VIEW -->
+            <div class="form-group" style="flex: 1;">
+              <label>AutoPay</label>
+              <select id="sc-autopay" class="form-input">
+                <option value="None">None</option>
+                <option value="ACH - Debit Card">ACH - Debit Card</option>
+                <option value="ACH - Credit Card">ACH - Credit Card</option>
+              </select>
             </div>
             <div class="form-group" style="flex: 1;">
               <label>Lead Status</label>
@@ -945,25 +1006,7 @@
       </div>
     </template>
 
-    <!-- ========================================== -->
-    <!-- TEMPLATE: SCRUB HUB BATCH GROUP (GRID)     -->
-    <!-- ========================================== -->
-    <template id="tmpl-scrub-group">
-      <div class="feed-card scrub-group-wrapper" style="margin-bottom: 24px;">
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;" id="sg-grid-container">
-          <!-- Mini cards injected here -->
-        </div>
-        <div style="border-top: 1px solid rgba(13,27,62,0.08); padding-top: 16px; display: flex; justify-content: space-between; align-items: center;">
-          <span id="sg-status-text" style="color: rgba(13,27,62,0.6); font-size: 13px; font-weight: 600;">Ready to batch scrub</span>
-          <button id="sg-save-batch-btn" class="btn-primary" style="padding: 12px 32px; font-size: 15px;">Save Batch ✓</button>
-        </div>
-      </div>
-    </template>
-
-    <!-- ========================================== -->
-    <!-- TEMPLATE: SCRUB HUB MINI CARD (GRID ITEM)  -->
-    <!-- ========================================== -->
-    <template id="tmpl-scrub-mini-card">
+   <template id="tmpl-scrub-mini-card">
       <div class="scrub-mini-card feed-customer-info" style="padding: 16px; display: flex; flex-direction: column; gap: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: flex-start;">
           <div style="font-weight: 700; color: #0f172a; font-size: 14px; line-height: 1.3;" id="scm-address">Address</div>
@@ -975,7 +1018,6 @@
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: color 0.2s ease;"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
         </div>
 
-        <!-- Hidden Inputs (Revealed on click) -->
         <div id="scm-name-edit-container" style="display: none; gap: 8px; margin-bottom: 12px; align-items: center;">
           <input type="text" id="scm-first-name" class="form-input" placeholder="First" style="flex: 1; padding: 6px 10px; font-size: 13px;" />
           <input type="text" id="scm-last-name" class="form-input" placeholder="Last" style="flex: 1; padding: 6px 10px; font-size: 13px;" />
@@ -1007,6 +1049,15 @@
         </div>
         
         <div style="display: flex; gap: 8px;">
+          <!-- 🚀 NEW: AUTOPAY DROPDOWN MINI VIEW -->
+          <div style="flex: 1;">
+            <label style="font-size: 11px; margin-bottom: 2px;">AutoPay</label>
+            <select id="scm-autopay" class="form-input" style="padding: 6px 10px; font-size: 13px; height: 32px;">
+              <option value="None">None</option>
+              <option value="ACH - Debit Card">ACH - Debit Card</option>
+              <option value="ACH - Credit Card">ACH - Credit Card</option>
+            </select>
+          </div>
           <div style="flex: 1;">
             <label style="font-size: 11px; margin-bottom: 2px;">Lead Status</label>
             <select id="scm-status" class="form-input" style="padding: 6px 10px; font-size: 13px; height: 32px; border-color: #fca5a5; color: #991b1b; background: #fef2f2;">
@@ -1018,10 +1069,25 @@
           </div>
         </div>
 
-        <textarea id="scm-notes" class="form-input form-textarea" placeholder="Note..." style="min-height: 40px; padding: 6px 10px; font-size: 13px;"></textarea>
+        <textarea id="scm-notes" class="form-input form-textarea" placeholder="Note..." style="min-height: 40px; padding: 6px 10px; font-size: 13px; margin-top: 4px;"></textarea>
       </div>
     </template>
 
+    <!-- ========================================== -->
+    <!-- TEMPLATE: SCRUB HUB BATCH GROUP (GRID)     -->
+    <!-- ========================================== -->
+    <template id="tmpl-scrub-group">
+      <div class="feed-card scrub-group-wrapper" style="margin-bottom: 24px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;" id="sg-grid-container">
+          <!-- Mini cards injected here -->
+        </div>
+        <div style="border-top: 1px solid rgba(13,27,62,0.08); padding-top: 16px; display: flex; justify-content: space-between; align-items: center;">
+          <span id="sg-status-text" style="color: rgba(13,27,62,0.6); font-size: 13px; font-weight: 600;">Ready to batch scrub</span>
+          <button id="sg-save-batch-btn" class="btn-primary" style="padding: 12px 32px; font-size: 15px;">Save Batch ✓</button>
+        </div>
+      </div>
+    </template>
+ 
     <template id="tmpl-shop">
   <div class="view-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
     <div>
